@@ -27,6 +27,34 @@ export interface VoxelRendererOptions {
   remeshBudget?: number;
 }
 
+/** How to draw one entity: a body and a head, coloured, facing `yaw`. */
+export interface EntityLook {
+  id: string;
+  /** Centre of the feet. */
+  position: Vec3;
+  yaw: number;
+  /** Width, height and depth of the collision box. */
+  size: Vec3;
+  /** 0xRRGGBB. */
+  body: number;
+  head: number;
+}
+
+const FACE_SHADE = [0.8, 0.8, 1, 0.5, 0.65, 0.65]; // +x, -x, +y, -y, +z, -z, as the mesher does
+
+/** A box with each face shaded like a chunk face, so figures sit in the world's look. */
+function shadedBox(width: number, height: number, depth: number, hex: number): THREE.BufferGeometry {
+  const geometry = new THREE.BoxGeometry(width, height, depth);
+  const base = new THREE.Color().setHex(hex);
+  const colors = new Float32Array(24 * 3);
+  for (let face = 0; face < 6; face++) {
+    const k = FACE_SHADE[face]!;
+    for (let v = 0; v < 4; v++) colors.set([base.r * k, base.g * k, base.b * k], (face * 4 + v) * 3);
+  }
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  return geometry;
+}
+
 const NEIGHBOURS: Vec3[] = [
   [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
 ];
@@ -45,6 +73,8 @@ export class VoxelRenderer {
   private readonly empty = new Set<ChunkKey>();
   private readonly dirty = new Set<ChunkKey>();
   private readonly highlight: THREE.LineSegments;
+  private readonly figureMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
+  private readonly figures = new Map<string, { group: THREE.Group; key: string }>();
   private readonly renderDistance: number;
   private readonly remeshBudget: number;
   private cameraChunk = "";
@@ -109,6 +139,53 @@ export class VoxelRenderer {
     }
   }
 
+  /**
+   * Draws these entities as simple figures, and removes any not in the list.
+   * Leave the local player out; the camera is inside them.
+   */
+  setEntities(looks: EntityLook[]): void {
+    const seen = new Set<string>();
+    for (const look of looks) {
+      seen.add(look.id);
+      const key = `${look.size.join(",")}|${look.body}|${look.head}`;
+      let figure = this.figures.get(look.id);
+      if (!figure || figure.key !== key) {
+        if (figure) this.removeFigure(look.id);
+        const [w, h, d] = look.size;
+        const bodyHeight = h * 0.72;
+        const body = new THREE.Mesh(shadedBox(w, bodyHeight, d * 0.8, look.body), this.figureMaterial);
+        body.position.y = bodyHeight / 2;
+        const headSize = Math.min(w, h - bodyHeight) * 0.95;
+        const head = new THREE.Mesh(shadedBox(headSize, h - bodyHeight, headSize, look.head), this.figureMaterial);
+        head.position.y = bodyHeight + (h - bodyHeight) / 2;
+        const group = new THREE.Group();
+        group.add(body, head);
+        this.scene.add(group);
+        figure = { group, key };
+        this.figures.set(look.id, figure);
+      }
+      figure.group.position.set(look.position[0], look.position[1], look.position[2]);
+      figure.group.rotation.y = look.yaw;
+    }
+    for (const id of [...this.figures.keys()]) if (!seen.has(id)) this.removeFigure(id);
+  }
+
+  /**
+   * Sky colour and overall brightness, 0 to 1. Brightness multiplies every
+   * colour in the world, a cheap stand-in for light that works on any phone.
+   */
+  setAmbient(options: { sky?: number; brightness?: number }): void {
+    if (options.sky !== undefined) {
+      this.renderer.setClearColor(options.sky);
+      (this.scene.fog as THREE.Fog).color.setHex(options.sky);
+    }
+    if (options.brightness !== undefined) {
+      const b = Math.max(0, Math.min(1, options.brightness));
+      this.material.color.setRGB(b, b, b);
+      this.figureMaterial.color.setRGB(b, b, b);
+    }
+  }
+
   /** Places the camera. `yaw` and `pitch` follow the same convention as core's viewDirection. */
   setView(eye: Vec3, yaw: number, pitch: number): void {
     this.camera.position.set(eye[0], eye[1], eye[2]);
@@ -143,6 +220,8 @@ export class VoxelRenderer {
 
   dispose(): void {
     for (const key of [...this.meshes.keys()]) this.removeMesh(key);
+    for (const id of [...this.figures.keys()]) this.removeFigure(id);
+    this.figureMaterial.dispose();
     this.material.dispose();
     this.highlight.geometry.dispose();
     (this.highlight.material as THREE.Material).dispose();
@@ -223,6 +302,14 @@ export class VoxelRenderer {
         this.meshes.set(key, object);
       }
     }
+  }
+
+  private removeFigure(id: string): void {
+    const figure = this.figures.get(id);
+    if (!figure) return;
+    this.scene.remove(figure.group);
+    for (const child of figure.group.children) (child as THREE.Mesh).geometry.dispose();
+    this.figures.delete(id);
   }
 
   private removeMesh(key: ChunkKey): void {

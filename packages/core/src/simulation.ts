@@ -6,7 +6,36 @@ import type { WorldGenerator } from "./generator";
 import { clamp, type Vec3 } from "./math";
 import { DEFAULT_PHYSICS, stepEntity, type PhysicsConfig, type WorldBounds } from "./physics";
 import { createSnapshot, restoreSnapshot, type GameState, type Snapshot, type SnapshotOptions } from "./snapshot";
+import type { JsonValue } from "./json";
 import { getBlock, writeBlock } from "./world";
+
+/** What a game system or action can do to the world during a tick. */
+export interface SystemContext {
+  sim: Simulation;
+  dt: number;
+  tick: number;
+  /**
+   * Places a block and reports it to clients, which writing to a chunk directly
+   * would not. Refuses, returning false, if the chunk is not loaded, the block is
+   * unknown, or a solid block would land inside an entity; try again next tick.
+   */
+  setBlock(position: Vec3, block: string): boolean;
+}
+
+/**
+ * Game logic that runs every tick, after that tick's commands and before
+ * physics, so what it decides (stopping a player, steering a patrol) is what
+ * physics acts on. Must only touch simulation state, which is plain data.
+ */
+export type GameSystem = (ctx: SystemContext) => void;
+
+export interface ActionContext extends SystemContext {
+  actor: Entity;
+  payload: JsonValue | undefined;
+}
+
+/** Handles an "act" command. Returns null to accept it, or a reason to reject it. */
+export type GameAction = (ctx: ActionContext) => string | null;
 
 export interface SimulationOptions {
   registry: BlockRegistry;
@@ -21,6 +50,10 @@ export interface SimulationOptions {
   loadBudget?: number;
   /** How far from their eyes an entity may place or remove a block. */
   reach?: number;
+  /** Game logic run every tick, in order. */
+  systems?: GameSystem[];
+  /** Handlers for "act" commands, by action name. */
+  actions?: Record<string, GameAction>;
 }
 
 /** What happened during a tick. Ids are registry-local; the host turns them into names. */
@@ -45,6 +78,8 @@ export class Simulation {
   readonly loadRadius: number;
   readonly loadBudget: number;
   readonly reach: number;
+  private readonly systems: GameSystem[];
+  private readonly actions: Record<string, GameAction>;
   private _state: GameState;
   private queue: IssuedCommand[] = [];
   private pending: SimEvent[] = [];
@@ -59,6 +94,8 @@ export class Simulation {
     this.loadRadius = options.loadRadius ?? 4;
     this.loadBudget = options.loadBudget ?? 8;
     this.reach = options.reach ?? 6;
+    this.systems = options.systems ?? [];
+    this.actions = options.actions ?? {};
     this._state = { tick: 0, seed: options.seed >>> 0, chunks: new Map(), entities: new Map() };
   }
 
@@ -96,6 +133,8 @@ export class Simulation {
       const reason = this.apply(issued, events);
       if (reason) events.push({ type: "rejected", actor: issued.actor, command: issued.command.type, reason });
     }
+    const context = this.context(events);
+    for (const system of this.systems) system(context);
     for (const entity of this._state.entities.values()) {
       // Hold an entity still while the chunk it stands in streams in.
       // Unloaded chunks collide as solid, so moving it now would shove it out.
@@ -189,11 +228,40 @@ export class Simulation {
         events.push({ type: "blockChanged", position: [p[0], p[1], p[2]], from, to });
         return null;
       }
+      case "act": {
+        if (typeof command.action !== "string") return "An action needs a name.";
+        const handler = Object.hasOwn(this.actions, command.action) ? this.actions[command.action] : undefined;
+        if (!handler) return `Unknown action "${command.action}".`;
+        return handler({ ...this.context(events), actor: entity, payload: command.payload });
+      }
       default: {
         const unknown: never = command;
         return `Unknown command "${(unknown as { type: string }).type}".`;
       }
     }
+  }
+
+  private context(events: SimEvent[]): SystemContext {
+    return {
+      sim: this,
+      dt: this.dt,
+      tick: this._state.tick,
+      setBlock: (position, block) => {
+        const [x, y, z] = position;
+        if (![x, y, z].every(Number.isInteger)) return false;
+        const to = this.registry.tryId(block);
+        if (to === undefined) return false;
+        const from = getBlock(this._state, x, y, z);
+        if (from === undefined) return false;
+        if (from === to) return true;
+        if (to !== AIR && this.registry.isSolid(to)) {
+          for (const entity of this._state.entities.values()) if (entityOverlapsBlock(entity, x, y, z)) return false;
+        }
+        writeBlock(this._state, x, y, z, to);
+        events.push({ type: "blockChanged", position: [x, y, z], from, to });
+        return true;
+      },
+    };
   }
 
   private streamChunks(events: SimEvent[], budget: number): void {
