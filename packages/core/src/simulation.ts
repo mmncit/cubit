@@ -159,7 +159,12 @@ export class Simulation {
       case "input": {
         const { forward, strafe, yaw, pitch } = command;
         if (![forward, strafe, yaw, pitch].every(Number.isFinite)) return "Input values must be finite numbers.";
-        entity.input = { forward: clamp(forward, -1, 1), strafe: clamp(strafe, -1, 1), jump: command.jump === true };
+        entity.input = {
+          forward: clamp(forward, -1, 1),
+          strafe: clamp(strafe, -1, 1),
+          jump: command.jump === true,
+          sprint: command.sprint === true,
+        };
         entity.yaw = yaw;
         entity.pitch = clamp(pitch, -Math.PI / 2, Math.PI / 2);
         return null;

@@ -8,6 +8,7 @@ export * from "./entity";
 export * from "./generator";
 export * from "./host";
 export * from "./json";
+export * from "./map";
 export * from "./math";
 export * from "./mesher";
 export * from "./physics";

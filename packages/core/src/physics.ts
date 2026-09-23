@@ -8,20 +8,29 @@ export interface PhysicsConfig {
   gravity: number;
   jumpSpeed: number;
   walkSpeed: number;
+  /** Speed multiplier while `input.sprint` is held. */
+  sprintMultiplier: number;
   /** How quickly horizontal velocity reaches the target, per second, on the ground. */
   acceleration: number;
   /** The same, in the air. */
   airAcceleration: number;
   terminalVelocity: number;
+  /**
+   * How high a walker climbs without jumping when it walks into a ledge, in
+   * blocks. 0 means every step needs a jump; 1 walks up one-block stairs.
+   */
+  stepHeight: number;
 }
 
 export const DEFAULT_PHYSICS: PhysicsConfig = {
   gravity: 28,
   jumpSpeed: 8.5,
   walkSpeed: 4.8,
+  sprintMultiplier: 1.6,
   acceleration: 14,
   airAcceleration: 3,
   terminalVelocity: 50,
+  stepHeight: 0,
 };
 
 /** The vertical extent of the world, in chunk coordinates, inclusive. */
@@ -66,7 +75,8 @@ export function stepEntity(
   if (entity.controller !== "walker") return;
   const v = entity.velocity;
 
-  const { forward, strafe, jump } = entity.input;
+  const { forward, strafe, jump, sprint } = entity.input;
+  const speed = config.walkSpeed * (sprint ? config.sprintMultiplier : 1);
   const sin = Math.sin(entity.yaw);
   const cos = Math.cos(entity.yaw);
   let wishX = -sin * forward + cos * strafe;
@@ -78,8 +88,8 @@ export function stepEntity(
   }
   const rate = entity.onGround ? config.acceleration : config.airAcceleration;
   const blend = Math.min(1, rate * dt);
-  v[0] += (wishX * config.walkSpeed - v[0]) * blend;
-  v[2] += (wishZ * config.walkSpeed - v[2]) * blend;
+  v[0] += (wishX * speed - v[0]) * blend;
+  v[2] += (wishZ * speed - v[2]) * blend;
 
   if (jump && entity.onGround) {
     v[1] = config.jumpSpeed;
@@ -96,8 +106,43 @@ export function stepEntity(
   } else {
     entity.onGround = false;
   }
-  if (moveAxis(store, registry, bounds, entity, 0, v[0] * dt)) v[0] = 0;
-  if (moveAxis(store, registry, bounds, entity, 2, v[2] * dt)) v[2] = 0;
+  if (moveHorizontal(store, registry, bounds, entity, 0, v[0] * dt, config.stepHeight)) v[0] = 0;
+  if (moveHorizontal(store, registry, bounds, entity, 2, v[2] * dt, config.stepHeight)) v[2] = 0;
+}
+
+/**
+ * Moves along x or z. If a walker on the ground is blocked, tries again lifted
+ * by up to `stepHeight`, and settles onto the step if that works. Returns true
+ * if the entity was blocked.
+ */
+function moveHorizontal(
+  store: ChunkStore,
+  registry: BlockRegistry,
+  bounds: WorldBounds,
+  entity: Entity,
+  axis: 0 | 2,
+  amount: number,
+  stepHeight: number,
+): boolean {
+  const p = entity.position;
+  const before: [number, number, number] = [p[0], p[1], p[2]];
+  if (!moveAxis(store, registry, bounds, entity, axis, amount)) return false;
+  if (stepHeight <= 0 || !entity.onGround) return true;
+
+  const blocked: [number, number, number] = [p[0], p[1], p[2]];
+  const restore = (to: [number, number, number]) => {
+    p[0] = to[0];
+    p[1] = to[1];
+    p[2] = to[2];
+  };
+  restore(before);
+  if (moveAxis(store, registry, bounds, entity, 1, stepHeight) || moveAxis(store, registry, bounds, entity, axis, amount)) {
+    restore(blocked);
+    return true;
+  }
+  // Drop back down onto the top of the step.
+  moveAxis(store, registry, bounds, entity, 1, -stepHeight - 2 * SKIN);
+  return false;
 }
 
 function moveAxis(

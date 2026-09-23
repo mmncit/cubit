@@ -5,6 +5,8 @@ export interface InputFrame {
   /** -1 to 1, positive is right. */
   strafe: number;
   jump: boolean;
+  /** Run instead of walk. */
+  sprint: boolean;
   /** Look change since the last frame, in radians. Positive turns right and looks down. */
   lookX: number;
   lookY: number;
@@ -25,18 +27,35 @@ export interface InputOptions {
   touch?: "auto" | boolean;
   /** Where touch controls are added. Defaults to the element's parent. */
   touchContainer?: HTMLElement;
+  /** Radians per pixel when dragging to look, used where pointer lock is refused. */
+  dragSensitivity?: number;
+  /** Called when look input switches between pointer lock, dragging and touch. */
+  onLookModeChange?(mode: LookMode): void;
   /** Labels for the on-screen buttons. */
   touchLabels?: { primary?: string; secondary?: string; jump?: string };
+  /** Which on-screen buttons to show. Defaults to all three. A walk-only game can drop primary and secondary. */
+  touchButtons?: ("primary" | "secondary" | "jump")[];
   onPointerLockChange?(locked: boolean): void;
 }
 
-const KEYS: Record<string, "forward" | "back" | "left" | "right" | "jump"> = {
+/**
+ * How the mouse or finger turns the view. "pointer-lock" is the usual desktop
+ * behaviour. Some browsers and embedded panes refuse pointer lock, and then the
+ * view turns by dragging with a mouse button held instead.
+ */
+export type LookMode = "pointer-lock" | "drag" | "touch";
+
+const KEYS: Record<string, "forward" | "back" | "left" | "right" | "jump" | "sprint"> = {
   KeyW: "forward", ArrowUp: "forward",
   KeyS: "back", ArrowDown: "back",
   KeyA: "left", ArrowLeft: "left",
   KeyD: "right", ArrowRight: "right",
   Space: "jump",
+  ShiftLeft: "sprint", ShiftRight: "sprint",
 };
+
+/** A mouse press that has moved less than this many pixels counts as a click, not a drag. */
+const CLICK_SLOP = 6;
 
 export function isTouchScreen(): boolean {
   return typeof window !== "undefined" && (window.matchMedia?.("(pointer: coarse)").matches || "ontouchstart" in window);
@@ -54,12 +73,34 @@ export class InputManager {
   private secondary = false;
   private select: number | null = null;
   private locked = false;
+  private lockRefused = false;
+  private lockEverWorked = false;
+  private drag: { button: number; moved: number } | null = null;
+  private mode: LookMode = "pointer-lock";
   private readonly cleanup: (() => void)[] = [];
   private readonly touch: TouchControls | null;
   private readonly mouseSensitivity: number;
 
   constructor(private readonly element: HTMLElement, options: InputOptions = {}) {
     this.mouseSensitivity = options.mouseSensitivity ?? 0.0025;
+    const dragSensitivity = options.dragSensitivity ?? 0.005;
+    const setMode = (mode: LookMode) => {
+      if (mode === this.mode) return;
+      this.mode = mode;
+      options.onLookModeChange?.(mode);
+    };
+    // A browser that has never granted pointer lock is not going to: fall back to
+    // dragging. One that has granted it before can still refuse a single request,
+    // for example straight after the player pressed Esc. That refusal is
+    // temporary, and the next click tries again.
+    const refused = () => {
+      if (this.lockEverWorked) {
+        options.onPointerLockChange?.(false);
+        return;
+      }
+      this.lockRefused = true;
+      setMode("drag");
+    };
     const wantsTouch = options.touch === "auto" || options.touch === undefined ? isTouchScreen() : options.touch;
 
     this.listen(window, "keydown", (e: KeyboardEvent) => {
@@ -84,28 +125,60 @@ export class InputManager {
     });
 
     if (!wantsTouch) {
+      this.lockRefused = typeof element.requestPointerLock !== "function";
+      if (this.lockRefused) queueMicrotask(() => setMode("drag"));
+
       this.listen(element, "click", () => {
-        if (!this.locked) {
-          const request = element.requestPointerLock?.() as unknown as Promise<void> | undefined;
-          request?.catch?.(() => undefined);
+        if (this.locked || this.lockRefused) return;
+        try {
+          const request = element.requestPointerLock() as unknown as Promise<void> | undefined;
+          request?.catch?.(refused);
+        } catch {
+          refused();
         }
       });
       this.listen(document, "pointerlockchange", () => {
         this.locked = document.pointerLockElement === element;
-        if (!this.locked) this.held.clear();
+        if (this.locked) {
+          this.lockEverWorked = true;
+          setMode("pointer-lock");
+        }
+        else this.held.clear();
         options.onPointerLockChange?.(this.locked);
       });
+      this.listen(document, "pointerlockerror", refused);
       this.listen(document, "mousemove", (e: MouseEvent) => {
-        if (!this.locked) return;
-        this.lookX += e.movementX * this.mouseSensitivity;
-        this.lookY += e.movementY * this.mouseSensitivity;
+        if (this.locked) {
+          this.lookX += e.movementX * this.mouseSensitivity;
+          this.lookY += e.movementY * this.mouseSensitivity;
+        } else if (this.drag) {
+          this.lookX += e.movementX * dragSensitivity;
+          this.lookY += e.movementY * dragSensitivity;
+          this.drag.moved += Math.abs(e.movementX) + Math.abs(e.movementY);
+        }
       });
       this.listen(document, "mousedown", (e: MouseEvent) => {
         if (!this.locked) return;
         if (e.button === 0) this.primary = true;
         if (e.button === 2) this.secondary = true;
       });
+      // Without pointer lock: drag to look, and a press that barely moved is a click.
+      // The click that asked for pointer lock never gets here as an action, because
+      // lockRefused only becomes true once the browser has said no.
+      this.listen(element, "mousedown", (e: MouseEvent) => {
+        if (this.locked || !this.lockRefused) return;
+        this.drag = { button: e.button, moved: 0 };
+      });
+      this.listen(window, "mouseup", () => {
+        const drag = this.drag;
+        this.drag = null;
+        if (!drag || this.locked || drag.moved >= CLICK_SLOP) return;
+        if (drag.button === 0) this.primary = true;
+        if (drag.button === 2) this.secondary = true;
+      });
       this.listen(element, "contextmenu", (e: Event) => e.preventDefault());
+    } else {
+      queueMicrotask(() => setMode("touch"));
     }
 
     this.touch = wantsTouch
@@ -113,6 +186,7 @@ export class InputManager {
           options.touchContainer ?? element.parentElement ?? document.body,
           options.touchSensitivity ?? 0.006,
           { primary: "Remove", secondary: "Place", jump: "Jump", ...options.touchLabels },
+          options.touchButtons ?? ["primary", "secondary", "jump"],
         )
       : null;
   }
@@ -120,7 +194,12 @@ export class InputManager {
   /** Lets go of everything held: keys, the move stick, the jump button. */
   release(): void {
     this.held.clear();
+    this.drag = null;
     this.touch?.release();
+  }
+
+  get lookMode(): LookMode {
+    return this.mode;
   }
 
   get pointerLocked(): boolean {
@@ -135,6 +214,7 @@ export class InputManager {
     let forward = (this.held.has("forward") ? 1 : 0) - (this.held.has("back") ? 1 : 0);
     let strafe = (this.held.has("right") ? 1 : 0) - (this.held.has("left") ? 1 : 0);
     let jump = this.held.has("jump");
+    const sprint = this.held.has("sprint");
     let lookX = this.lookX;
     let lookY = this.lookY;
     let primary = this.primary;
@@ -153,7 +233,7 @@ export class InputManager {
       secondary ||= t.secondary;
     }
 
-    const frame: InputFrame = { forward, strafe, jump, lookX, lookY, primary, secondary, select: this.select };
+    const frame: InputFrame = { forward, strafe, jump, sprint, lookX, lookY, primary, secondary, select: this.select };
     this.lookX = this.lookY = 0;
     this.primary = this.secondary = false;
     this.select = null;
@@ -198,6 +278,7 @@ class TouchControls {
     container: HTMLElement,
     private readonly sensitivity: number,
     labels: { primary: string; secondary: string; jump: string },
+    shown: ("primary" | "secondary" | "jump")[],
   ) {
     this.root = el("div", {
       position: "absolute", inset: "0", touchAction: "none", userSelect: "none",
@@ -221,11 +302,9 @@ class TouchControls {
       position: "absolute", right: "16px", bottom: "calc(16px + env(safe-area-inset-bottom))",
       display: "flex", gap: "12px", alignItems: "flex-end",
     });
-    buttons.append(
-      this.button(labels.primary, () => (this.primary = true)),
-      this.button(labels.secondary, () => (this.secondary = true)),
-      this.button(labels.jump, () => (this.jump = true), () => (this.jump = false), true),
-    );
+    if (shown.includes("primary")) buttons.append(this.button(labels.primary, () => (this.primary = true)));
+    if (shown.includes("secondary")) buttons.append(this.button(labels.secondary, () => (this.secondary = true)));
+    if (shown.includes("jump")) buttons.append(this.button(labels.jump, () => (this.jump = true), () => (this.jump = false), true));
     this.root.append(buttons);
     container.append(this.root);
 

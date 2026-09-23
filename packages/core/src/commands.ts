@@ -11,6 +11,7 @@ export type Command =
       forward: number;
       strafe: number;
       jump: boolean;
+      sprint?: boolean;
       yaw: number;
       pitch: number;
     }

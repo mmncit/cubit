@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getBlock, Simulation, type Command } from "../src";
-import { flatSim, makeRegistry, terrain } from "./helpers";
+import { flatGenerator, flatSim, makeRegistry, terrain } from "./helpers";
 
 function withPlayer(sim: Simulation, position: [number, number, number] = [0.5, 10, 0.5]) {
   sim.preload(position, 1);
@@ -60,6 +60,54 @@ describe("physics", () => {
     for (let i = 0; i < 180; i++) sim.step();
     expect(player.position[0]).toBeLessThan(3 - 0.3 + 1e-3);
     expect(player.position[0]).toBeGreaterThan(2.5);
+  });
+
+  it("runs faster than it walks while sprint is held", () => {
+    const distance = (sprint: boolean) => {
+      const sim = flatSim(9);
+      const player = withPlayer(sim, [0.5, 10, 0.5]);
+      sim.step();
+      sim.enqueue("p1", { type: "input", forward: 1, strafe: 0, jump: false, sprint, yaw: 0, pitch: 0 });
+      for (let i = 0; i < 60; i++) sim.step();
+      return 0.5 - player.position[2];
+    };
+    const walk = distance(false);
+    const run = distance(true);
+    expect(walk).toBeGreaterThan(3);
+    expect(run / walk).toBeGreaterThan(1.4);
+  });
+
+  it("loads an entity saved before sprint existed and treats it as walking", () => {
+    const sim = flatSim(9);
+    const player = withPlayer(sim, [0.5, 10, 0.5]);
+    delete (player.input as { sprint?: boolean }).sprint;
+    player.input.forward = 1;
+    for (let i = 0; i < 60; i++) sim.step();
+    expect(0.5 - player.position[2]).toBeLessThan(5);
+  });
+
+  it("walks up a one-block step when stepHeight allows it, and not a two-block wall", () => {
+    const climb = (stepHeight: number, wallHeight: number) => {
+      const sim = new Simulation({ registry: makeRegistry(), generator: flatGenerator(9), seed: 1, loadRadius: 1, physics: { stepHeight } });
+      const player = withPlayer(sim, [0.5, 10, 0.5]);
+      sim.step();
+      // A platform from z = -3 to -6, so a player who climbs it stays on top.
+      for (let y = 10; y < 10 + wallHeight; y++) {
+        for (let z = -3; z >= -6; z--) {
+          for (let x = -1; x <= 1; x++) sim.enqueue("p1", { type: "setBlock", position: [x, y, z], block: "stone" });
+        }
+      }
+      sim.enqueue("p1", { type: "input", forward: 1, strafe: 0, jump: false, yaw: 0, pitch: 0 });
+      for (let i = 0; i < 50; i++) sim.step();
+      return player.position;
+    };
+    const stepped = climb(1, 1);
+    expect(stepped[1]).toBeCloseTo(11, 2);
+    expect(stepped[2]).toBeLessThan(-3);
+    expect(climb(0, 1)[1]).toBeCloseTo(10, 2);
+    const wall = climb(1, 2);
+    expect(wall[1]).toBeCloseTo(10, 2);
+    expect(wall[2]).toBeGreaterThan(-2.4);
   });
 
   it("jumps only from the ground", () => {
