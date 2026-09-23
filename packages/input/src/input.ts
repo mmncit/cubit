@@ -33,6 +33,8 @@ export interface InputOptions {
   onLookModeChange?(mode: LookMode): void;
   /** Labels for the on-screen buttons. */
   touchLabels?: { primary?: string; secondary?: string; jump?: string };
+  /** Which on-screen buttons to show. Defaults to all three. A walk-only game can drop primary and secondary. */
+  touchButtons?: ("primary" | "secondary" | "jump")[];
   onPointerLockChange?(locked: boolean): void;
 }
 
@@ -175,6 +177,7 @@ export class InputManager {
           options.touchContainer ?? element.parentElement ?? document.body,
           options.touchSensitivity ?? 0.006,
           { primary: "Remove", secondary: "Place", jump: "Jump", ...options.touchLabels },
+          options.touchButtons ?? ["primary", "secondary", "jump"],
         )
       : null;
   }
@@ -266,6 +269,7 @@ class TouchControls {
     container: HTMLElement,
     private readonly sensitivity: number,
     labels: { primary: string; secondary: string; jump: string },
+    shown: ("primary" | "secondary" | "jump")[],
   ) {
     this.root = el("div", {
       position: "absolute", inset: "0", touchAction: "none", userSelect: "none",
@@ -289,11 +293,9 @@ class TouchControls {
       position: "absolute", right: "16px", bottom: "calc(16px + env(safe-area-inset-bottom))",
       display: "flex", gap: "12px", alignItems: "flex-end",
     });
-    buttons.append(
-      this.button(labels.primary, () => (this.primary = true)),
-      this.button(labels.secondary, () => (this.secondary = true)),
-      this.button(labels.jump, () => (this.jump = true), () => (this.jump = false), true),
-    );
+    if (shown.includes("primary")) buttons.append(this.button(labels.primary, () => (this.primary = true)));
+    if (shown.includes("secondary")) buttons.append(this.button(labels.secondary, () => (this.secondary = true)));
+    if (shown.includes("jump")) buttons.append(this.button(labels.jump, () => (this.jump = true), () => (this.jump = false), true));
     this.root.append(buttons);
     container.append(this.root);
 
