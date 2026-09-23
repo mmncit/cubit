@@ -7,6 +7,8 @@ export interface EntityInput {
   /** -1 to 1, positive is right. */
   strafe: number;
   jump: boolean;
+  /** Move at the run speed. Optional so snapshots from before it existed still load. */
+  sprint?: boolean;
 }
 
 /**
@@ -45,7 +47,7 @@ export function createEntity(init: EntityInit): Entity {
     pitch: init.pitch ?? 0,
     onGround: init.onGround ?? false,
     controller: init.controller ?? "none",
-    input: init.input ? { ...init.input } : { forward: 0, strafe: 0, jump: false },
+    input: init.input ? { ...init.input } : { forward: 0, strafe: 0, jump: false, sprint: false },
     data: init.data ? { ...init.data } : {},
   };
 }

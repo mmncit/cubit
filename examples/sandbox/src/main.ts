@@ -65,6 +65,14 @@ const input = new InputManager(canvas, {
   touch,
   touchContainer: document.querySelector<HTMLDivElement>("#app")!,
   onPointerLockChange: (locked) => (overlay.hidden = locked),
+  onLookModeChange: (mode) => {
+    // Some browsers and embedded panes refuse pointer lock. Play on with
+    // drag-to-look instead of leaving the card up forever.
+    if (mode === "drag") {
+      overlay.hidden = true;
+      say("This browser will not capture the mouse, so drag to look. A click still removes a block.");
+    }
+  },
 });
 overlay.addEventListener("click", () => canvas.click());
 
@@ -173,7 +181,7 @@ function frame(now: number) {
   }
   connection.send({
     type: "command",
-    command: { type: "input", forward: intent.forward, strafe: intent.strafe, jump: intent.jump, yaw, pitch },
+    command: { type: "input", forward: intent.forward, strafe: intent.strafe, jump: intent.jump, sprint: intent.sprint, yaw, pitch },
   });
 
   const alpha = host.advance(dt);

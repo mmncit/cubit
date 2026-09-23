@@ -10,8 +10,9 @@ pnpm dev
 ```
 
 Then open http://127.0.0.1:5173. On a computer: click to play, WASD to move, Space
-to jump, mouse to look, left click removes a block, right click places one, 1 to 8
-picks a block. On a phone: drag on the left to move, drag on the right to look.
+to jump, Shift to run, mouse to look, left click removes a block, right click
+places one, 1 to 8 picks a block. Where the browser will not capture the mouse,
+drag to look instead. On a phone: drag on the left to move, drag on the right to look.
 
 - `packages/core`: state, simulation, physics, serialization. Runs in a browser
   or on a server.

@@ -8,6 +8,8 @@ export interface PhysicsConfig {
   gravity: number;
   jumpSpeed: number;
   walkSpeed: number;
+  /** Speed multiplier while `input.sprint` is held. */
+  sprintMultiplier: number;
   /** How quickly horizontal velocity reaches the target, per second, on the ground. */
   acceleration: number;
   /** The same, in the air. */
@@ -19,6 +21,7 @@ export const DEFAULT_PHYSICS: PhysicsConfig = {
   gravity: 28,
   jumpSpeed: 8.5,
   walkSpeed: 4.8,
+  sprintMultiplier: 1.6,
   acceleration: 14,
   airAcceleration: 3,
   terminalVelocity: 50,
@@ -66,7 +69,8 @@ export function stepEntity(
   if (entity.controller !== "walker") return;
   const v = entity.velocity;
 
-  const { forward, strafe, jump } = entity.input;
+  const { forward, strafe, jump, sprint } = entity.input;
+  const speed = config.walkSpeed * (sprint ? config.sprintMultiplier : 1);
   const sin = Math.sin(entity.yaw);
   const cos = Math.cos(entity.yaw);
   let wishX = -sin * forward + cos * strafe;
@@ -78,8 +82,8 @@ export function stepEntity(
   }
   const rate = entity.onGround ? config.acceleration : config.airAcceleration;
   const blend = Math.min(1, rate * dt);
-  v[0] += (wishX * config.walkSpeed - v[0]) * blend;
-  v[2] += (wishZ * config.walkSpeed - v[2]) * blend;
+  v[0] += (wishX * speed - v[0]) * blend;
+  v[2] += (wishZ * speed - v[2]) * blend;
 
   if (jump && entity.onGround) {
     v[1] = config.jumpSpeed;

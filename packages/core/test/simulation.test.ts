@@ -62,6 +62,30 @@ describe("physics", () => {
     expect(player.position[0]).toBeGreaterThan(2.5);
   });
 
+  it("runs faster than it walks while sprint is held", () => {
+    const distance = (sprint: boolean) => {
+      const sim = flatSim(9);
+      const player = withPlayer(sim, [0.5, 10, 0.5]);
+      sim.step();
+      sim.enqueue("p1", { type: "input", forward: 1, strafe: 0, jump: false, sprint, yaw: 0, pitch: 0 });
+      for (let i = 0; i < 60; i++) sim.step();
+      return 0.5 - player.position[2];
+    };
+    const walk = distance(false);
+    const run = distance(true);
+    expect(walk).toBeGreaterThan(3);
+    expect(run / walk).toBeGreaterThan(1.4);
+  });
+
+  it("loads an entity saved before sprint existed and treats it as walking", () => {
+    const sim = flatSim(9);
+    const player = withPlayer(sim, [0.5, 10, 0.5]);
+    delete (player.input as { sprint?: boolean }).sprint;
+    player.input.forward = 1;
+    for (let i = 0; i < 60; i++) sim.step();
+    expect(0.5 - player.position[2]).toBeLessThan(5);
+  });
+
   it("jumps only from the ground", () => {
     const sim = flatSim(9);
     const player = withPlayer(sim, [0.5, 10, 0.5]);
