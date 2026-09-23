@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No "DOM" and no node types. Core has to run in a browser and on a server,
+    // so it may only use what the language itself provides.
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": ["src"]
+}
