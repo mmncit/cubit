@@ -26,6 +26,9 @@ importers:
       '@cubit/input':
         specifier: workspace:*
         version: link:../../packages/input
+      '@cubit/minimap':
+        specifier: workspace:*
+        version: link:../../packages/minimap
       '@cubit/three':
         specifier: workspace:*
         version: link:../../packages/three
@@ -37,6 +40,12 @@ importers:
         version: 4.0.3
 
   packages/input: {}
+
+  packages/minimap:
+    dependencies:
+      '@cubit/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/three:
     dependencies:

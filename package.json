@@ -7,7 +7,7 @@
     "dev": "pnpm --filter sandbox dev",
     "build": "pnpm --filter sandbox build",
     "test": "vitest run",
-    "typecheck": "tsc -p packages/core && tsc -p packages/three && tsc -p packages/input && tsc -p examples/sandbox"
+    "typecheck": "tsc -p packages/core && tsc -p packages/three && tsc -p packages/input && tsc -p packages/minimap && tsc -p examples/sandbox"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

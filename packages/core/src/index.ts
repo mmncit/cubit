@@ -17,4 +17,5 @@ export * from "./raycast";
 export * from "./rng";
 export * from "./simulation";
 export * from "./snapshot";
+export * from "./topdown";
 export * from "./world";

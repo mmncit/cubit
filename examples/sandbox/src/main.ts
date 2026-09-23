@@ -13,6 +13,7 @@ import {
   type Vec3,
 } from "@cubit/core";
 import { InputManager } from "@cubit/input";
+import { Minimap } from "@cubit/minimap";
 import { VoxelRenderer } from "@cubit/three";
 
 // A generic demo of the engine. Colours only, no textures: small to download,
@@ -61,6 +62,8 @@ const hotbar = document.querySelector<HTMLDivElement>("#hotbar")!;
 document.body.classList.toggle("touch", touch);
 
 const renderer = new VoxelRenderer({ canvas, registry, renderDistance, maxPixelRatio: touch ? 1.5 : 2 });
+// The sandbox world has no edge, so its map follows the player.
+const minimap = new Minimap({ registry, container: document.querySelector<HTMLDivElement>("#panel")!, radius: 40, size: touch ? 112 : 150 });
 const input = new InputManager(canvas, {
   touch,
   touchContainer: document.querySelector<HTMLDivElement>("#app")!,
@@ -82,6 +85,7 @@ const connection = host.connect({
   onMessage: (message) => {
     const changes = client.apply(message);
     renderer.applyChanges(changes);
+    minimap.applyChanges(changes);
     for (const change of changes) if (change.type === "rejected") say(change.reason);
   },
 });
@@ -208,6 +212,8 @@ function frame(now: number) {
   }
 
   renderer.render(client);
+  const viewer = client.player();
+  minimap.update(client, viewer ? { position: client.interpolatedPosition(viewer.id, alpha)!, yaw } : undefined, now);
 
   frames++;
   if (now - fpsTime > 500) {
