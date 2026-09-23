@@ -35,6 +35,7 @@ html, body {
   border-radius: 6px; padding: 4px 10px; cursor: pointer;
 }
 #status { font-size: 12px; min-height: 1.4em; }
+#panel canvas[data-cubit-minimap] { display: block; border-radius: 6px; border: 1px solid var(--line); background: #cdd9c3; }
 #stats {
   position: absolute; right: 12px; top: calc(12px + env(safe-area-inset-top)); z-index: 7;
   font: 12px ui-monospace, monospace; background: var(--panel); border-radius: 6px; padding: 4px 8px;
@@ -63,7 +64,7 @@ html, body {
 #overlay p { margin: 4px 0; }
 #overlay[hidden] { display: none; }
 body.touch #overlay { display: none; }
-body.touch #hotbar { top: calc(112px + env(safe-area-inset-top)); bottom: auto; }
+body.touch #hotbar { top: auto; bottom: calc(110px + env(safe-area-inset-bottom)); left: 50%; }
 body.touch #stats { display: none; }
 @media (max-width: 480px) {
   #hotbar button { width: 34px; height: 34px; }

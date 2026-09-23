@@ -11,6 +11,7 @@
   "dependencies": {
     "@cubit/core": "workspace:*",
     "@cubit/input": "workspace:*",
+    "@cubit/minimap": "workspace:*",
     "@cubit/three": "workspace:*"
   }
 }
