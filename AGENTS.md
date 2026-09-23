@@ -67,6 +67,34 @@ other voxel projects unless their licence allows it, and never use Minecraft's
 textures or fonts. The sandbox uses flat colours for this reason as well as for
 download size.
 
+## Packages and releases
+
+The four packages publish privately to GitHub Packages as `@mmncit/cubit-core`,
+`@mmncit/cubit-three`, `@mmncit/cubit-input` and `@mmncit/cubit-minimap`. GitHub's
+registry requires the account name as the scope, which is why they are not
+`@cubit/*` there.
+
+Code still imports `@cubit/core` and so on. Each dependency is an alias
+(`"@cubit/core": "workspace:@mmncit/cubit-core@*"` here, `npm:@mmncit/cubit-core@...`
+in a game), and pnpm rewrites the workspace alias when publishing. Never import
+`@mmncit/cubit-*` directly.
+
+The packages ship TypeScript source, not built JavaScript. A game compiles them,
+so its tsconfig has to match `tsconfig.base.json` closely enough, and
+`@cubit/three` carries `@types/three` as a real dependency for that reason.
+
+To release, bump `version` in all four `packages/*/package.json` together, merge,
+then from `main`:
+
+```bash
+NPM_TOKEN=$(command gh auth token --user mmncit) pnpm publish:packages
+```
+
+That runs the tests and the typecheck first. The token needs the
+`write:packages` scope. `.npmrc` reads `NPM_TOKEN` from the environment. Without
+it, pnpm warns that it could not replace the variable, and installing still works.
+Games pin a version, so a release changes nothing until a game upgrades.
+
 ## Git and GitHub
 
 The `mnc-conventions` skill from `mmncit/platform-context` covers git identity,
