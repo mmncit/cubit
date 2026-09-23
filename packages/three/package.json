@@ -1,18 +1,26 @@
 {
-  "name": "@cubit/three",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
+  "name": "@mmncit/cubit-three",
+  "version": "0.1.0",
   "description": "three.js renderer for a @cubit/core client world.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mmncit/cubit.git",
+    "directory": "packages/three"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
   "types": "./src/index.ts",
-  "dependencies": {
-    "@cubit/core": "workspace:*",
-    "three": "^0.186.0"
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
-  "devDependencies": {
-    "@types/three": "^0.186.0"
+  "dependencies": {
+    "@cubit/core": "workspace:@mmncit/cubit-core@*",
+    "@types/three": "^0.186.0",
+    "three": "^0.186.0"
   }
 }

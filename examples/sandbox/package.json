@@ -9,9 +9,9 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "@cubit/core": "workspace:*",
-    "@cubit/input": "workspace:*",
-    "@cubit/minimap": "workspace:*",
-    "@cubit/three": "workspace:*"
+    "@cubit/core": "workspace:@mmncit/cubit-core@*",
+    "@cubit/input": "workspace:@mmncit/cubit-input@*",
+    "@cubit/minimap": "workspace:@mmncit/cubit-minimap@*",
+    "@cubit/three": "workspace:@mmncit/cubit-three@*"
   }
 }

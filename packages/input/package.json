@@ -1,11 +1,21 @@
 {
-  "name": "@cubit/input",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
+  "name": "@mmncit/cubit-input",
+  "version": "0.1.0",
   "description": "Keyboard, mouse and touch input mapped to abstract game actions.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mmncit/cubit.git",
+    "directory": "packages/input"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
-  "types": "./src/index.ts"
+  "types": "./src/index.ts",
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
 }

@@ -21,16 +21,16 @@ importers:
   examples/sandbox:
     dependencies:
       '@cubit/core':
-        specifier: workspace:*
+        specifier: workspace:@mmncit/cubit-core@*
         version: link:../../packages/core
       '@cubit/input':
-        specifier: workspace:*
+        specifier: workspace:@mmncit/cubit-input@*
         version: link:../../packages/input
       '@cubit/minimap':
-        specifier: workspace:*
+        specifier: workspace:@mmncit/cubit-minimap@*
         version: link:../../packages/minimap
       '@cubit/three':
-        specifier: workspace:*
+        specifier: workspace:@mmncit/cubit-three@*
         version: link:../../packages/three
 
   packages/core:
@@ -44,19 +44,18 @@ importers:
   packages/minimap:
     dependencies:
       '@cubit/core':
-        specifier: workspace:*
+        specifier: workspace:@mmncit/cubit-core@*
         version: link:../core
 
   packages/three:
     dependencies:
       '@cubit/core':
-        specifier: workspace:*
+        specifier: workspace:@mmncit/cubit-core@*
         version: link:../core
-      three:
+      '@types/three':
         specifier: ^0.186.0
         version: 0.186.0
-    devDependencies:
-      '@types/three':
+      three:
         specifier: ^0.186.0
         version: 0.186.0
 
