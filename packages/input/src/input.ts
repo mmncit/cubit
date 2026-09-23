@@ -74,6 +74,7 @@ export class InputManager {
   private select: number | null = null;
   private locked = false;
   private lockRefused = false;
+  private lockEverWorked = false;
   private drag: { button: number; moved: number } | null = null;
   private mode: LookMode = "pointer-lock";
   private readonly cleanup: (() => void)[] = [];
@@ -87,6 +88,18 @@ export class InputManager {
       if (mode === this.mode) return;
       this.mode = mode;
       options.onLookModeChange?.(mode);
+    };
+    // A browser that has never granted pointer lock is not going to: fall back to
+    // dragging. One that has granted it before can still refuse a single request,
+    // for example straight after the player pressed Esc. That refusal is
+    // temporary, and the next click tries again.
+    const refused = () => {
+      if (this.lockEverWorked) {
+        options.onPointerLockChange?.(false);
+        return;
+      }
+      this.lockRefused = true;
+      setMode("drag");
     };
     const wantsTouch = options.touch === "auto" || options.touch === undefined ? isTouchScreen() : options.touch;
 
@@ -119,25 +132,21 @@ export class InputManager {
         if (this.locked || this.lockRefused) return;
         try {
           const request = element.requestPointerLock() as unknown as Promise<void> | undefined;
-          request?.catch?.(() => {
-            this.lockRefused = true;
-            setMode("drag");
-          });
+          request?.catch?.(refused);
         } catch {
-          this.lockRefused = true;
-          setMode("drag");
+          refused();
         }
       });
       this.listen(document, "pointerlockchange", () => {
         this.locked = document.pointerLockElement === element;
-        if (this.locked) setMode("pointer-lock");
+        if (this.locked) {
+          this.lockEverWorked = true;
+          setMode("pointer-lock");
+        }
         else this.held.clear();
         options.onPointerLockChange?.(this.locked);
       });
-      this.listen(document, "pointerlockerror", () => {
-        this.lockRefused = true;
-        setMode("drag");
-      });
+      this.listen(document, "pointerlockerror", refused);
       this.listen(document, "mousemove", (e: MouseEvent) => {
         if (this.locked) {
           this.lookX += e.movementX * this.mouseSensitivity;
