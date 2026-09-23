@@ -18,6 +18,13 @@ export interface MinimapOptions {
   label?: string;
 }
 
+/** A point to mark on the map, such as where to go next. */
+export interface MinimapMarker {
+  position: Vec3;
+  /** Any CSS colour. */
+  color: string;
+}
+
 export interface MinimapViewer {
   position: Vec3;
   /** Same convention as core's viewDirection: 0 faces north (-z), positive turns left. */
@@ -72,7 +79,7 @@ export class Minimap {
   }
 
   /** Call once per frame. */
-  update(store: ChunkStore, viewer: MinimapViewer | undefined, now = performance.now()): void {
+  update(store: ChunkStore, viewer: MinimapViewer | undefined, now = performance.now(), markers: MinimapMarker[] = []): void {
     const area = this.fixedArea ?? (viewer ? this.followArea(viewer.position) : null);
     if (!area) return;
     const moved = !this.area || area.minX !== this.area.minX || area.minZ !== this.area.minZ;
@@ -82,7 +89,7 @@ export class Minimap {
       this.dirty = false;
       this.lastDrawn = now;
     }
-    this.compose(viewer);
+    this.compose(viewer, markers);
   }
 
   dispose(): void {
@@ -105,7 +112,7 @@ export class Minimap {
     ctx.putImageData(new ImageData(new Uint8ClampedArray(image.pixels), image.width, image.height), 0, 0);
   }
 
-  private compose(viewer: MinimapViewer | undefined): void {
+  private compose(viewer: MinimapViewer | undefined, markers: MinimapMarker[]): void {
     const ctx = this.element.getContext("2d")!;
     const w = this.element.width;
     const h = this.element.height;
@@ -129,6 +136,18 @@ export class Minimap {
     ctx.fillStyle = "#fff";
     ctx.strokeText("N", w / 2, 4 * unit);
     ctx.fillText("N", w / 2, 4 * unit);
+
+    for (const marker of markers) {
+      const mx = (marker.position[0] - area.minX) * scaleX;
+      const mz = (marker.position[2] - area.minZ) * scaleZ;
+      ctx.beginPath();
+      ctx.arc(mx, mz, 4.5 * unit, 0, Math.PI * 2);
+      ctx.fillStyle = marker.color;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+      ctx.lineWidth = 2 * unit;
+      ctx.fill();
+      ctx.stroke();
+    }
 
     if (!viewer) return;
     const px = (viewer.position[0] - area.minX) * scaleX;

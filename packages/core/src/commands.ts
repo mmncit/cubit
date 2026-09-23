@@ -1,3 +1,4 @@
+import type { JsonValue } from "./json";
 import type { Vec3 } from "./math";
 
 /**
@@ -20,6 +21,16 @@ export type Command =
       position: Vec3;
       /** Block name. "air" removes the block. */
       block: string;
+    }
+  | {
+      /**
+       * A game-defined action, such as talking to someone or answering a
+       * question. The game registers a handler for each action name with the
+       * simulation, and the handler validates it like any other command.
+       */
+      type: "act";
+      action: string;
+      payload?: JsonValue;
     };
 
 /** A command stamped with the entity that issued it. The host sets `actor`, never the client. */

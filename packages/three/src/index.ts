@@ -1,1 +1,1 @@
-export { VoxelRenderer, type VoxelRendererOptions } from "./renderer";
+export { VoxelRenderer, type EntityLook, type VoxelRendererOptions } from "./renderer";
