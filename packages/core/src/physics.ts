@@ -15,6 +15,11 @@ export interface PhysicsConfig {
   /** The same, in the air. */
   airAcceleration: number;
   terminalVelocity: number;
+  /**
+   * How high a walker climbs without jumping when it walks into a ledge, in
+   * blocks. 0 means every step needs a jump; 1 walks up one-block stairs.
+   */
+  stepHeight: number;
 }
 
 export const DEFAULT_PHYSICS: PhysicsConfig = {
@@ -25,6 +30,7 @@ export const DEFAULT_PHYSICS: PhysicsConfig = {
   acceleration: 14,
   airAcceleration: 3,
   terminalVelocity: 50,
+  stepHeight: 0,
 };
 
 /** The vertical extent of the world, in chunk coordinates, inclusive. */
@@ -100,8 +106,43 @@ export function stepEntity(
   } else {
     entity.onGround = false;
   }
-  if (moveAxis(store, registry, bounds, entity, 0, v[0] * dt)) v[0] = 0;
-  if (moveAxis(store, registry, bounds, entity, 2, v[2] * dt)) v[2] = 0;
+  if (moveHorizontal(store, registry, bounds, entity, 0, v[0] * dt, config.stepHeight)) v[0] = 0;
+  if (moveHorizontal(store, registry, bounds, entity, 2, v[2] * dt, config.stepHeight)) v[2] = 0;
+}
+
+/**
+ * Moves along x or z. If a walker on the ground is blocked, tries again lifted
+ * by up to `stepHeight`, and settles onto the step if that works. Returns true
+ * if the entity was blocked.
+ */
+function moveHorizontal(
+  store: ChunkStore,
+  registry: BlockRegistry,
+  bounds: WorldBounds,
+  entity: Entity,
+  axis: 0 | 2,
+  amount: number,
+  stepHeight: number,
+): boolean {
+  const p = entity.position;
+  const before: [number, number, number] = [p[0], p[1], p[2]];
+  if (!moveAxis(store, registry, bounds, entity, axis, amount)) return false;
+  if (stepHeight <= 0 || !entity.onGround) return true;
+
+  const blocked: [number, number, number] = [p[0], p[1], p[2]];
+  const restore = (to: [number, number, number]) => {
+    p[0] = to[0];
+    p[1] = to[1];
+    p[2] = to[2];
+  };
+  restore(before);
+  if (moveAxis(store, registry, bounds, entity, 1, stepHeight) || moveAxis(store, registry, bounds, entity, axis, amount)) {
+    restore(blocked);
+    return true;
+  }
+  // Drop back down onto the top of the step.
+  moveAxis(store, registry, bounds, entity, 1, -stepHeight - 2 * SKIN);
+  return false;
 }
 
 function moveAxis(
