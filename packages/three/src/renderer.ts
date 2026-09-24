@@ -75,6 +75,9 @@ export class VoxelRenderer {
   private readonly highlight: THREE.LineSegments;
   private readonly figureMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
   private readonly figures = new Map<string, { group: THREE.Group; key: string }>();
+  private readonly waypoint: THREE.Mesh;
+  private waypointAt: Vec3 | null = null;
+  private readonly clock = new THREE.Clock();
   private readonly renderDistance: number;
   private readonly remeshBudget: number;
   private cameraChunk = "";
@@ -105,6 +108,18 @@ export class VoxelRenderer {
     );
     this.highlight.visible = false;
     this.scene.add(this.highlight);
+
+    // A cone pointing down at a goal, drawn over everything and ignoring fog, so
+    // it can be found from anywhere.
+    const cone = new THREE.ConeGeometry(0.35, 0.8, 16);
+    cone.rotateX(Math.PI);
+    this.waypoint = new THREE.Mesh(
+      cone,
+      new THREE.MeshBasicMaterial({ color: 0xe8452c, depthTest: false, depthWrite: false, transparent: true, opacity: 0.92, fog: false }),
+    );
+    this.waypoint.renderOrder = 999;
+    this.waypoint.visible = false;
+    this.scene.add(this.waypoint);
   }
 
   /** Feed in what ClientWorld.apply returned. */
@@ -186,6 +201,17 @@ export class VoxelRenderer {
     }
   }
 
+  /**
+   * Marks a point in the world with a bouncing cone, or clears it with null.
+   * `position` is the ground it points at, such as an entity's feet or the top
+   * of a block.
+   */
+  setWaypoint(position: Vec3 | null, options: { color?: number; lift?: number } = {}): void {
+    this.waypointAt = position ? [position[0], position[1] + (options.lift ?? 2.4), position[2]] : null;
+    this.waypoint.visible = !!position;
+    if (options.color !== undefined) (this.waypoint.material as THREE.MeshBasicMaterial).color.setHex(options.color);
+  }
+
   /** Places the camera. `yaw` and `pitch` follow the same convention as core's viewDirection. */
   setView(eye: Vec3, yaw: number, pitch: number): void {
     this.camera.position.set(eye[0], eye[1], eye[2]);
@@ -208,6 +234,15 @@ export class VoxelRenderer {
   }
 
   render(store: ChunkStore): void {
+    const t = this.clock.getElapsedTime();
+    if (this.waypointAt) {
+      const [x, y, z] = this.waypointAt;
+      this.waypoint.position.set(x, y + Math.abs(Math.sin(t * 3)) * 0.5, z);
+      this.waypoint.rotation.y = t * 1.5;
+      // Grow with distance so it stays visible far away without looming up close.
+      const d = this.camera.position.distanceTo(this.waypoint.position);
+      this.waypoint.scale.setScalar(Math.max(1, d / 14));
+    }
     this.trackRange(store);
     this.remesh(store);
     this.renderer.render(this.scene, this.camera);
@@ -222,6 +257,8 @@ export class VoxelRenderer {
     for (const key of [...this.meshes.keys()]) this.removeMesh(key);
     for (const id of [...this.figures.keys()]) this.removeFigure(id);
     this.figureMaterial.dispose();
+    this.waypoint.geometry.dispose();
+    (this.waypoint.material as THREE.Material).dispose();
     this.material.dispose();
     this.highlight.geometry.dispose();
     (this.highlight.material as THREE.Material).dispose();
