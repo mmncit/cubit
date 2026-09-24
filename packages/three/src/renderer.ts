@@ -14,6 +14,22 @@ import {
   type VoxelModel,
 } from "@cubit/core";
 
+/** Where a held model sits in front of the camera. */
+export interface HeldOptions {
+  /**
+   * Right, up and back from the eye, in blocks. Forward is -z. On a screen
+   * narrower than it is tall, right is scaled down so the model stays in view.
+   */
+  offset?: Vec3;
+  /** Turn about the vertical, in radians. */
+  yaw?: number;
+  /** Tilt towards the camera, in radians. */
+  pitch?: number;
+  scale?: number;
+}
+
+const HELD_DEFAULTS = { offset: [0.28, -0.24, -0.62] as Vec3, yaw: 0.9, pitch: 0.35, scale: 0.42 };
+
 export interface VoxelRendererOptions {
   canvas: HTMLCanvasElement;
   registry: BlockRegistry;
@@ -83,6 +99,11 @@ export class VoxelRenderer {
   private readonly figureMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
   private readonly figures = new Map<string, { group: THREE.Group; key: string }>();
   private readonly models = new Map<string, THREE.BufferGeometry>();
+  // What the player holds: its own scene and a camera fixed at the origin, drawn
+  // after the world so it sits in front of everything.
+  private readonly heldScene = new THREE.Scene();
+  private readonly heldCamera: THREE.PerspectiveCamera;
+  private held: { name: string; mesh: THREE.Mesh; options: HeldOptions } | null = null;
   private readonly waypoint: THREE.Mesh;
   private waypointAt: Vec3 | null = null;
   private readonly clock = new THREE.Clock();
@@ -106,6 +127,7 @@ export class VoxelRenderer {
 
     this.camera = new THREE.PerspectiveCamera(options.fov ?? 70, 1, 0.05, 1000);
     this.camera.rotation.order = "YXZ";
+    this.heldCamera = new THREE.PerspectiveCamera(options.fov ?? 70, 1, 0.01, 10);
 
     const far = this.renderDistance * CHUNK_SIZE;
     this.scene.fog = new THREE.Fog(sky, far * 0.55, far);
@@ -179,8 +201,41 @@ export class VoxelRenderer {
     if (old) {
       // Redraw anything using the old one, then free it.
       for (const [id, figure] of this.figures) if (figure.key.endsWith(`|${name}`)) this.removeFigure(id);
+      if (this.held?.name === name) {
+        const { options } = this.held;
+        this.setHeld(null);
+        this.setHeld(name, options);
+      }
       old.dispose();
     }
+  }
+
+  /**
+   * Shows a model held in front of the camera, low and to the right, the way a
+   * first-person game shows what the player carries. Null puts it away. It is
+   * drawn after the world with the depth cleared, so it never sinks into a wall.
+   */
+  setHeld(name: string | null, options: HeldOptions = {}): void {
+    if (this.held && (this.held.name !== name || name === null)) {
+      this.heldScene.remove(this.held.mesh);
+      this.held = null;
+    }
+    if (name === null || this.held) return;
+    const geometry = this.models.get(name);
+    if (!geometry) throw new Error(`No model named "${name}". Call defineModel first.`);
+    const mesh = new THREE.Mesh(geometry, this.figureMaterial);
+    const o = { ...HELD_DEFAULTS, ...options };
+    mesh.rotation.set(o.pitch, o.yaw, 0, "YXZ");
+    mesh.scale.setScalar(o.scale);
+    this.heldScene.add(mesh);
+    this.held = { name, mesh, options };
+    this.placeHeld();
+  }
+
+  private placeHeld(): void {
+    if (!this.held) return;
+    const [x, y, z] = this.held.options.offset ?? HELD_DEFAULTS.offset;
+    this.held.mesh.position.set(x * Math.min(1, this.heldCamera.aspect), y, z);
   }
 
   /**
@@ -269,6 +324,9 @@ export class VoxelRenderer {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(1, height);
     this.camera.updateProjectionMatrix();
+    this.heldCamera.aspect = this.camera.aspect;
+    this.heldCamera.updateProjectionMatrix();
+    this.placeHeld();
   }
 
   render(store: ChunkStore): void {
@@ -285,6 +343,12 @@ export class VoxelRenderer {
     this.trackRange(store);
     this.remesh(store);
     this.renderer.render(this.scene, this.camera);
+    if (this.held) {
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.heldScene, this.heldCamera);
+      this.renderer.autoClear = true;
+    }
   }
 
   /** Number of chunk meshes currently drawn. */
@@ -295,6 +359,7 @@ export class VoxelRenderer {
   dispose(): void {
     for (const key of [...this.meshes.keys()]) this.removeMesh(key);
     for (const id of [...this.figures.keys()]) this.removeFigure(id);
+    this.setHeld(null);
     for (const geometry of this.models.values()) geometry.dispose();
     this.models.clear();
     this.figureMaterial.dispose();
