@@ -139,13 +139,13 @@ export class VoxelRenderer {
     this.highlight.visible = false;
     this.scene.add(this.highlight);
 
-    // A cone pointing down at a goal, drawn over everything and ignoring fog, so
-    // it can be found from anywhere.
+    // A cone pointing down at a goal, ignoring fog so it can be seen from far
+    // off. Walls and hills hide it unless setWaypoint asks for it through walls.
     const cone = new THREE.ConeGeometry(0.35, 0.8, 16);
     cone.rotateX(Math.PI);
     this.waypoint = new THREE.Mesh(
       cone,
-      new THREE.MeshBasicMaterial({ color: 0xe8452c, depthTest: false, depthWrite: false, transparent: true, opacity: 0.92, fog: false }),
+      new THREE.MeshBasicMaterial({ color: 0xe8452c, depthTest: true, depthWrite: false, transparent: true, opacity: 0.92, fog: false }),
     );
     this.waypoint.renderOrder = 999;
     this.waypoint.visible = false;
@@ -297,12 +297,15 @@ export class VoxelRenderer {
   /**
    * Marks a point in the world with a bouncing cone, or clears it with null.
    * `position` is the ground it points at, such as an entity's feet or the top
-   * of a block.
+   * of a block. The world hides it like any other object; `throughWalls` draws
+   * it over everything instead.
    */
-  setWaypoint(position: Vec3 | null, options: { color?: number; lift?: number } = {}): void {
+  setWaypoint(position: Vec3 | null, options: { color?: number; lift?: number; throughWalls?: boolean } = {}): void {
     this.waypointAt = position ? [position[0], position[1] + (options.lift ?? 2.4), position[2]] : null;
     this.waypoint.visible = !!position;
-    if (options.color !== undefined) (this.waypoint.material as THREE.MeshBasicMaterial).color.setHex(options.color);
+    const material = this.waypoint.material as THREE.MeshBasicMaterial;
+    if (options.color !== undefined) material.color.setHex(options.color);
+    material.depthTest = !options.throughWalls;
   }
 
   /** Places the camera. `yaw` and `pitch` follow the same convention as core's viewDirection. */
