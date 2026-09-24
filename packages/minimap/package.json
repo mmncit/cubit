@@ -1,6 +1,6 @@
 {
   "name": "@mmncit/cubit-minimap",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A top-down map of a client world, drawn on a 2D canvas, with the player's position and heading.",
   "type": "module",
   "repository": {

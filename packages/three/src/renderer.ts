@@ -3,6 +3,7 @@ import {
   CHUNK_SIZE,
   chunkKey,
   meshChunk,
+  meshModel,
   parseChunkKey,
   toChunk,
   type BlockRegistry,
@@ -10,6 +11,7 @@ import {
   type ChunkStore,
   type ClientChange,
   type Vec3,
+  type VoxelModel,
 } from "@cubit/core";
 
 export interface VoxelRendererOptions {
@@ -27,7 +29,10 @@ export interface VoxelRendererOptions {
   remeshBudget?: number;
 }
 
-/** How to draw one entity: a body and a head, coloured, facing `yaw`. */
+/**
+ * How to draw one entity, facing `yaw`: a body and a head, coloured, or a voxel
+ * model defined earlier with `defineModel`.
+ */
 export interface EntityLook {
   id: string;
   /** Centre of the feet. */
@@ -35,9 +40,11 @@ export interface EntityLook {
   yaw: number;
   /** Width, height and depth of the collision box. */
   size: Vec3;
-  /** 0xRRGGBB. */
-  body: number;
-  head: number;
+  /** 0xRRGGBB. Used when there is no `model`. */
+  body?: number;
+  head?: number;
+  /** The name of a model given to `defineModel`. Drawn instead of a body and head. */
+  model?: string;
 }
 
 const FACE_SHADE = [0.8, 0.8, 1, 0.5, 0.65, 0.65]; // +x, -x, +y, -y, +z, -z, as the mesher does
@@ -75,6 +82,7 @@ export class VoxelRenderer {
   private readonly highlight: THREE.LineSegments;
   private readonly figureMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
   private readonly figures = new Map<string, { group: THREE.Group; key: string }>();
+  private readonly models = new Map<string, THREE.BufferGeometry>();
   private readonly waypoint: THREE.Mesh;
   private waypointAt: Vec3 | null = null;
   private readonly clock = new THREE.Clock();
@@ -155,6 +163,27 @@ export class VoxelRenderer {
   }
 
   /**
+   * Makes a voxel model available to entities by name. Defining a name again
+   * replaces the model for entities drawn from then on.
+   */
+  defineModel(name: string, model: VoxelModel): void {
+    const mesh = meshModel(model, { linearColors: true });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+    geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 3));
+    geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    geometry.computeBoundingSphere();
+    const old = this.models.get(name);
+    this.models.set(name, geometry);
+    if (old) {
+      // Redraw anything using the old one, then free it.
+      for (const [id, figure] of this.figures) if (figure.key.endsWith(`|${name}`)) this.removeFigure(id);
+      old.dispose();
+    }
+  }
+
+  /**
    * Draws these entities as simple figures, and removes any not in the list.
    * Leave the local player out; the camera is inside them.
    */
@@ -162,19 +191,28 @@ export class VoxelRenderer {
     const seen = new Set<string>();
     for (const look of looks) {
       seen.add(look.id);
-      const key = `${look.size.join(",")}|${look.body}|${look.head}`;
+      const key = `${look.size.join(",")}|${look.body}|${look.head}|${look.model ?? ""}`;
       let figure = this.figures.get(look.id);
       if (!figure || figure.key !== key) {
         if (figure) this.removeFigure(look.id);
-        const [w, h, d] = look.size;
-        const bodyHeight = h * 0.72;
-        const body = new THREE.Mesh(shadedBox(w, bodyHeight, d * 0.8, look.body), this.figureMaterial);
-        body.position.y = bodyHeight / 2;
-        const headSize = Math.min(w, h - bodyHeight) * 0.95;
-        const head = new THREE.Mesh(shadedBox(headSize, h - bodyHeight, headSize, look.head), this.figureMaterial);
-        head.position.y = bodyHeight + (h - bodyHeight) / 2;
         const group = new THREE.Group();
-        group.add(body, head);
+        if (look.model !== undefined) {
+          const geometry = this.models.get(look.model);
+          if (!geometry) throw new Error(`No model named "${look.model}". Call defineModel first.`);
+          // Shared by every entity drawn with this model, so removeFigure leaves it alone.
+          const mesh = new THREE.Mesh(geometry, this.figureMaterial);
+          mesh.userData.shared = true;
+          group.add(mesh);
+        } else {
+          const [w, h, d] = look.size;
+          const bodyHeight = h * 0.72;
+          const body = new THREE.Mesh(shadedBox(w, bodyHeight, d * 0.8, look.body ?? 0x808080), this.figureMaterial);
+          body.position.y = bodyHeight / 2;
+          const headSize = Math.min(w, h - bodyHeight) * 0.95;
+          const head = new THREE.Mesh(shadedBox(headSize, h - bodyHeight, headSize, look.head ?? 0x808080), this.figureMaterial);
+          head.position.y = bodyHeight + (h - bodyHeight) / 2;
+          group.add(body, head);
+        }
         this.scene.add(group);
         figure = { group, key };
         this.figures.set(look.id, figure);
@@ -257,6 +295,8 @@ export class VoxelRenderer {
   dispose(): void {
     for (const key of [...this.meshes.keys()]) this.removeMesh(key);
     for (const id of [...this.figures.keys()]) this.removeFigure(id);
+    for (const geometry of this.models.values()) geometry.dispose();
+    this.models.clear();
     this.figureMaterial.dispose();
     this.waypoint.geometry.dispose();
     (this.waypoint.material as THREE.Material).dispose();
@@ -346,7 +386,7 @@ export class VoxelRenderer {
     const figure = this.figures.get(id);
     if (!figure) return;
     this.scene.remove(figure.group);
-    for (const child of figure.group.children) (child as THREE.Mesh).geometry.dispose();
+    for (const child of figure.group.children) if (!child.userData.shared) (child as THREE.Mesh).geometry.dispose();
     this.figures.delete(id);
   }
 
