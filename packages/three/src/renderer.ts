@@ -36,6 +36,65 @@ function geometryOf(mesh: ReturnType<typeof meshModel>): THREE.BufferGeometry | 
   return geometry;
 }
 
+/** Smooth value noise over the cloud tile's cells, wrapping so the tile repeats without a seam. */
+function cloudNoise(i: number, j: number, cells: number, seed: number): number {
+  const at = (a: number, b: number) => {
+    let h = ((((a % cells) + cells) % cells) * 374761393 + (((b % cells) + cells) % cells) * 668265263 + seed * 2147483647) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  const f = (n: number, period: number) => {
+    const x = n / period;
+    const x0 = Math.floor(x);
+    const t = x - x0;
+    return { x0, t: t * t * (3 - 2 * t) };
+  };
+  let total = 0;
+  let weight = 0;
+  for (const [period, w] of [[4, 0.65], [2, 0.35]] as const) {
+    const a = f(i, period);
+    const b = f(j, period);
+    const p = cells / period;
+    const g = (u: number, v: number) => at(((u % p) + p) % p + 1000 * period, ((v % p) + p) % p);
+    const top = g(a.x0, b.x0) * (1 - a.t) + g(a.x0 + 1, b.x0) * a.t;
+    const bottom = g(a.x0, b.x0 + 1) * (1 - a.t) + g(a.x0 + 1, b.x0 + 1) * a.t;
+    total += (top * (1 - b.t) + bottom * b.t) * w;
+    weight += w;
+  }
+  return total / weight;
+}
+
+/** One tile of blocky clouds: cells where the noise is high, merged into slabs with only their outside faces. */
+function cloudGeometry(coverage: number, seed: number): THREE.BufferGeometry {
+  const cells = CLOUD_TILE / CLOUD_CELL;
+  const on = (i: number, j: number) => cloudNoise(i, j, cells, seed) > 1 - Math.max(0, Math.min(1, coverage)) * 0.9 - 0.05;
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const s = CLOUD_CELL;
+  const h = 3;
+  const quad = (a: number[], b: number[], c: number[], d: number[], k: number) => {
+    for (const v of [a, b, c, a, c, d]) positions.push(v[0]!, v[1]!, v[2]!), colors.push(k, k, k);
+  };
+  for (let i = 0; i < cells; i++) {
+    for (let j = 0; j < cells; j++) {
+      if (!on(i, j)) continue;
+      const x = i * s;
+      const z = j * s;
+      quad([x, h, z], [x, h, z + s], [x + s, h, z + s], [x + s, h, z], 1); // top
+      quad([x, 0, z], [x + s, 0, z], [x + s, 0, z + s], [x, 0, z + s], 0.72); // underside
+      if (!on(i + 1, j)) quad([x + s, 0, z], [x + s, h, z], [x + s, h, z + s], [x + s, 0, z + s], 0.88);
+      if (!on(i - 1, j)) quad([x, 0, z], [x, 0, z + s], [x, h, z + s], [x, h, z], 0.88);
+      if (!on(i, j + 1)) quad([x, 0, z + s], [x + s, 0, z + s], [x + s, h, z + s], [x, h, z + s], 0.82);
+      if (!on(i, j - 1)) quad([x, 0, z], [x, h, z], [x + s, h, z], [x + s, 0, z], 0.82);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 /** A soft round light, bright in the middle and gone at the edge, drawn once. */
 function haloTexture(): THREE.Texture {
   const canvas = document.createElement("canvas");
@@ -83,7 +142,41 @@ export interface VoxelRendererOptions {
   remeshBudget?: number;
   /** Draw the blocks' texture styles. On by default; off gives flat colours. */
   textures?: boolean;
+  /**
+   * Light the world with a sun and the sky instead of flat colour. Off by
+   * default. Place the sun with `setSun`.
+   */
+  lighting?: boolean;
+  /** With lighting, the sun casts soft shadows. The costliest thing here: leave it off on cheap phones. */
+  shadows?: boolean;
+  /** Edge of the shadow map in pixels. 2048 by default. */
+  shadowMapSize?: number;
 }
+
+/** Where the sun is: `azimuth` from north towards east, `elevation` above the horizon, in radians. */
+export interface SunOptions {
+  azimuth: number;
+  elevation: number;
+  /** 0xRRGGBB. White by default; warmer towards dusk. */
+  color?: number;
+}
+
+/** A layer of blocky clouds high over the world. */
+export interface CloudOptions {
+  /** Height of the cloud base, in blocks. */
+  height: number;
+  /** Share of the sky covered, 0 to 1. 0.4 by default. */
+  coverage?: number;
+  /** Drift eastwards, in blocks a second. 1.5 by default. */
+  speed?: number;
+  /** Changes the pattern. */
+  seed?: number;
+}
+
+// Faces are shaded a little less when the world is lit, since the lights shade them too.
+const LIT_SHADE = { top: 1, bottom: 0.82, x: 0.94, z: 0.88 };
+const CLOUD_TILE = 256;
+const CLOUD_CELL = 8;
 
 /**
  * How to draw one entity, facing `yaw`: a body and a head, coloured, or a voxel
@@ -131,13 +224,27 @@ export class VoxelRenderer {
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
   private readonly registry: BlockRegistry;
-  private readonly material = new THREE.MeshBasicMaterial({ vertexColors: true });
+  private readonly material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial;
   private readonly atlas: AtlasLayout | undefined;
   private readonly meshes = new Map<ChunkKey, THREE.Mesh>();
   private readonly empty = new Set<ChunkKey>();
   private readonly dirty = new Set<ChunkKey>();
   private readonly highlight: THREE.LineSegments;
-  private readonly figureMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
+  private readonly figureMaterial: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial;
+  // Lighting, when asked for: a sun that follows the camera, and the sky's light.
+  private readonly lit: boolean;
+  private readonly shadows: boolean;
+  private readonly sun: THREE.DirectionalLight | null = null;
+  private readonly skyLight: THREE.HemisphereLight | null = null;
+  private readonly sunDirection = new THREE.Vector3(0, 1, 0);
+  private readonly shadowExtent: number = 0;
+  private readonly shadowMapSize: number = 2048;
+  // Clouds, drawn in their own pass with their own, longer fog.
+  private readonly cloudScene = new THREE.Scene();
+  private clouds: { group: THREE.Group; geometry: THREE.BufferGeometry; material: THREE.MeshBasicMaterial; offset: number; speed: number } | null = null;
+  private sky: number;
+  private brightness = 1;
+  private lastFrameTime = 0;
   private readonly figures = new Map<string, { group: THREE.Group; key: string }>();
   private readonly models = new Map<string, ModelParts>();
   // Glowing faces are drawn at full brightness and seen through fog; their halo
@@ -159,6 +266,11 @@ export class VoxelRenderer {
 
   constructor(options: VoxelRendererOptions) {
     this.registry = options.registry;
+    this.lit = options.lighting ?? false;
+    this.shadows = this.lit && (options.shadows ?? false);
+    const Material = this.lit ? THREE.MeshLambertMaterial : THREE.MeshBasicMaterial;
+    this.material = new Material({ vertexColors: true });
+    this.figureMaterial = new Material({ vertexColors: true });
     if (options.textures !== false) {
       // One small atlas of every style the blocks use, multiplied into their colours.
       // Pixels stay crisp up close and blend smoothly far away.
@@ -174,6 +286,7 @@ export class VoxelRenderer {
     this.renderDistance = options.renderDistance ?? 4;
     this.remeshBudget = options.remeshBudget ?? 4;
     const sky = options.sky ?? 0x9fc9e8;
+    this.sky = sky;
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: options.canvas,
@@ -189,6 +302,30 @@ export class VoxelRenderer {
 
     const far = this.renderDistance * CHUNK_SIZE;
     this.scene.fog = new THREE.Fog(sky, far * 0.55, far);
+    this.cloudScene.fog = new THREE.Fog(sky, 140, 380);
+
+    if (this.lit) {
+      // Sky light from above and a warm bounce from the ground, so shaded sides stay readable.
+      this.skyLight = new THREE.HemisphereLight(0xeef3ff, 0xc2ad8e, 1);
+      this.sun = new THREE.DirectionalLight(0xffffff, 0.85);
+      this.scene.add(this.skyLight, this.sun, this.sun.target);
+      if (this.shadows) {
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.shadowMapSize = options.shadowMapSize ?? 2048;
+        this.shadowExtent = Math.min(56, far * 0.7);
+        const shadow = this.sun.shadow;
+        this.sun.castShadow = true;
+        shadow.mapSize.set(this.shadowMapSize, this.shadowMapSize);
+        Object.assign(shadow.camera, { left: -this.shadowExtent, right: this.shadowExtent, top: this.shadowExtent, bottom: -this.shadowExtent, near: 1, far: 260 });
+        shadow.camera.updateProjectionMatrix();
+        shadow.bias = -0.0004;
+        shadow.normalBias = 0.04;
+      }
+      // Held things are lit evenly, so they read the same wherever the player stands.
+      this.heldScene.add(new THREE.HemisphereLight(0xffffff, 0x9a8a70, 2));
+      this.setSun({ azimuth: -0.7, elevation: 0.95 });
+    }
 
     this.highlight = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)),
@@ -247,7 +384,7 @@ export class VoxelRenderer {
    * replaces the model for entities drawn from then on.
    */
   defineModel(name: string, model: VoxelModel): void {
-    const rest = geometryOf(meshModel(model, { linearColors: true, part: "rest" })) ?? new THREE.BufferGeometry();
+    const rest = geometryOf(meshModel(model, { linearColors: true, part: "rest", ...(this.lit ? { shade: LIT_SHADE } : {}) })) ?? new THREE.BufferGeometry();
     const glow = geometryOf(meshModel(model, { linearColors: true, part: "glow" }));
     const old = this.models.get(name);
     this.models.set(name, { rest, glow, halo: glowCentre(model) });
@@ -275,6 +412,7 @@ export class VoxelRenderer {
     if (parts.glow) {
       const glow = new THREE.Mesh(parts.glow, this.glowMaterial);
       glow.userData.shared = true;
+      glow.userData.glow = true;
       group.add(glow);
     }
     if (halo && parts.halo) {
@@ -343,6 +481,7 @@ export class VoxelRenderer {
           head.position.y = bodyHeight + (h - bodyHeight) / 2;
           group.add(body, head);
         }
+        if (this.shadows) group.traverse((o) => { if ((o as THREE.Mesh).isMesh && o.userData.glow !== true) o.castShadow = o.receiveShadow = true; });
         this.scene.add(group);
         figure = { group, key };
         this.figures.set(look.id, figure);
@@ -359,16 +498,71 @@ export class VoxelRenderer {
    */
   setAmbient(options: { sky?: number; brightness?: number }): void {
     if (options.sky !== undefined) {
+      this.sky = options.sky;
       this.renderer.setClearColor(options.sky);
       (this.scene.fog as THREE.Fog).color.setHex(options.sky);
+      (this.cloudScene.fog as THREE.Fog).color.setHex(options.sky);
     }
     if (options.brightness !== undefined) {
       const b = Math.max(0, Math.min(1, options.brightness));
-      this.material.color.setRGB(b, b, b);
-      this.figureMaterial.color.setRGB(b, b, b);
+      this.brightness = b;
+      if (this.lit) {
+        // The lights dim, not the colours, so shade and shadow keep their shape.
+        this.skyLight!.intensity = 0.35 + 0.7 * b;
+        this.sun!.intensity = 0.75 * b;
+      } else {
+        this.material.color.setRGB(b, b, b);
+        this.figureMaterial.color.setRGB(b, b, b);
+      }
       this.haloStrength = Math.max(0, Math.min(0.9, (0.95 - b) * 1.8));
       if (this.haloMaterial) this.haloMaterial.opacity = this.haloStrength;
     }
+    this.tintClouds();
+  }
+
+  /**
+   * Places the sun, and colours its light. Needs `lighting`. Lower it in the
+   * evening for long shadows and warm it towards dusk.
+   */
+  setSun(options: SunOptions): void {
+    if (!this.sun) return;
+    const { azimuth, elevation } = options;
+    this.sunDirection.set(Math.sin(azimuth) * Math.cos(elevation), Math.sin(elevation), -Math.cos(azimuth) * Math.cos(elevation)).normalize();
+    this.sun.color.setHex(options.color ?? 0xffffff);
+  }
+
+  /** Lays a layer of blocky clouds over the world, or clears it with null. */
+  setClouds(options: CloudOptions | null): void {
+    if (this.clouds) {
+      this.cloudScene.remove(this.clouds.group);
+      this.clouds.geometry.dispose();
+      this.clouds.material.dispose();
+      this.clouds = null;
+    }
+    if (!options) return;
+    const geometry = cloudGeometry(options.coverage ?? 0.4, options.seed ?? 1);
+    const material = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.92, depthWrite: false });
+    const group = new THREE.Group();
+    // Nine copies of one tile, so the sky never runs out as the player walks.
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const tile = new THREE.Mesh(geometry, material);
+        tile.position.set(i * CLOUD_TILE, 0, j * CLOUD_TILE);
+        group.add(tile);
+      }
+    }
+    group.position.y = options.height;
+    this.cloudScene.add(group);
+    this.clouds = { group, geometry, material, offset: 0, speed: options.speed ?? 1.5 };
+    this.tintClouds();
+  }
+
+  /** Clouds are white, taking on the sky's colour towards dusk and dimming with the light. */
+  private tintClouds(): void {
+    if (!this.clouds) return;
+    const white = new THREE.Color(0xffffff);
+    const sky = new THREE.Color(this.sky);
+    this.clouds.material.color.copy(white.lerp(sky, 0.35)).multiplyScalar(0.45 + 0.55 * this.brightness);
   }
 
   /**
@@ -422,7 +616,20 @@ export class VoxelRenderer {
     }
     this.trackRange(store);
     this.remesh(store);
+    if (this.sun) this.placeSun();
     this.renderer.render(this.scene, this.camera);
+    if (this.clouds) {
+      // Drift, and keep the tiles centred on the camera.
+      this.clouds.offset = (this.clouds.offset + Math.max(0, t - this.lastFrameTime) * this.clouds.speed) % CLOUD_TILE;
+      const cx = Math.floor(this.camera.position.x / CLOUD_TILE) * CLOUD_TILE;
+      const cz = Math.floor(this.camera.position.z / CLOUD_TILE) * CLOUD_TILE;
+      this.clouds.group.position.x = cx + this.clouds.offset - CLOUD_TILE / 2;
+      this.clouds.group.position.z = cz - CLOUD_TILE / 2;
+      this.renderer.autoClear = false;
+      this.renderer.render(this.cloudScene, this.camera);
+      this.renderer.autoClear = true;
+    }
+    this.lastFrameTime = t;
     if (this.held) {
       this.renderer.autoClear = false;
       this.renderer.clearDepth();
@@ -447,6 +654,7 @@ export class VoxelRenderer {
     this.models.clear();
     this.figureMaterial.dispose();
     this.glowMaterial.dispose();
+    this.setClouds(null);
     this.haloMaterial?.map?.dispose();
     this.haloMaterial?.dispose();
     this.waypoint.geometry.dispose();
@@ -506,7 +714,7 @@ export class VoxelRenderer {
         continue;
       }
       budget--;
-      const mesh = meshChunk(store, this.registry, coords, { linearColors: true, atlas: this.atlas });
+      const mesh = meshChunk(store, this.registry, coords, { linearColors: true, atlas: this.atlas, ...(this.lit ? { shade: LIT_SHADE } : {}) });
       if (mesh.faceCount === 0) {
         this.removeMesh(key);
         this.empty.add(key);
@@ -526,6 +734,7 @@ export class VoxelRenderer {
         existing.geometry = geometry;
       } else {
         const object = new THREE.Mesh(geometry, this.material);
+        object.castShadow = object.receiveShadow = this.shadows;
         object.position.set(coords[0] * CHUNK_SIZE, coords[1] * CHUNK_SIZE, coords[2] * CHUNK_SIZE);
         object.matrixAutoUpdate = false;
         object.updateMatrix();
@@ -533,6 +742,19 @@ export class VoxelRenderer {
         this.meshes.set(key, object);
       }
     }
+  }
+
+  /** Keeps the sun's shadow box on the camera, snapped to its texels so shadows do not shimmer. */
+  private placeSun(): void {
+    const sun = this.sun!;
+    const target = this.camera.position.clone();
+    if (this.shadows) {
+      const texel = (this.shadowExtent * 2) / this.shadowMapSize;
+      target.set(Math.round(target.x / texel) * texel, Math.round(target.y / texel) * texel, Math.round(target.z / texel) * texel);
+    }
+    sun.target.position.copy(target);
+    sun.position.copy(target).addScaledVector(this.sunDirection, 120);
+    sun.target.updateMatrixWorld();
   }
 
   private removeFigure(id: string): void {

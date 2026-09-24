@@ -1,6 +1,6 @@
 {
   "name": "@mmncit/cubit-core",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Renderer-free voxel game state, simulation and serialization. Runs in a browser or on a server.",
   "type": "module",
   "repository": {
