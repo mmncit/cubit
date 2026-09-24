@@ -3,6 +3,7 @@ import {
   CHUNK_SIZE,
   chunkKey,
   meshChunk,
+  meshModel,
   parseChunkKey,
   toChunk,
   type BlockRegistry,
@@ -10,7 +11,24 @@ import {
   type ChunkStore,
   type ClientChange,
   type Vec3,
+  type VoxelModel,
 } from "@cubit/core";
+
+/** Where a held model sits in front of the camera. */
+export interface HeldOptions {
+  /**
+   * Right, up and back from the eye, in blocks. Forward is -z. On a screen
+   * narrower than it is tall, right is scaled down so the model stays in view.
+   */
+  offset?: Vec3;
+  /** Turn about the vertical, in radians. */
+  yaw?: number;
+  /** Tilt towards the camera, in radians. */
+  pitch?: number;
+  scale?: number;
+}
+
+const HELD_DEFAULTS = { offset: [0.28, -0.24, -0.62] as Vec3, yaw: 0.9, pitch: 0.35, scale: 0.42 };
 
 export interface VoxelRendererOptions {
   canvas: HTMLCanvasElement;
@@ -27,7 +45,10 @@ export interface VoxelRendererOptions {
   remeshBudget?: number;
 }
 
-/** How to draw one entity: a body and a head, coloured, facing `yaw`. */
+/**
+ * How to draw one entity, facing `yaw`: a body and a head, coloured, or a voxel
+ * model defined earlier with `defineModel`.
+ */
 export interface EntityLook {
   id: string;
   /** Centre of the feet. */
@@ -35,9 +56,11 @@ export interface EntityLook {
   yaw: number;
   /** Width, height and depth of the collision box. */
   size: Vec3;
-  /** 0xRRGGBB. */
-  body: number;
-  head: number;
+  /** 0xRRGGBB. Used when there is no `model`. */
+  body?: number;
+  head?: number;
+  /** The name of a model given to `defineModel`. Drawn instead of a body and head. */
+  model?: string;
 }
 
 const FACE_SHADE = [0.8, 0.8, 1, 0.5, 0.65, 0.65]; // +x, -x, +y, -y, +z, -z, as the mesher does
@@ -75,6 +98,15 @@ export class VoxelRenderer {
   private readonly highlight: THREE.LineSegments;
   private readonly figureMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
   private readonly figures = new Map<string, { group: THREE.Group; key: string }>();
+  private readonly models = new Map<string, THREE.BufferGeometry>();
+  // What the player holds: its own scene and a camera fixed at the origin, drawn
+  // after the world so it sits in front of everything.
+  private readonly heldScene = new THREE.Scene();
+  private readonly heldCamera: THREE.PerspectiveCamera;
+  private held: { name: string; mesh: THREE.Mesh; options: HeldOptions } | null = null;
+  private readonly waypoint: THREE.Mesh;
+  private waypointAt: Vec3 | null = null;
+  private readonly clock = new THREE.Clock();
   private readonly renderDistance: number;
   private readonly remeshBudget: number;
   private cameraChunk = "";
@@ -95,6 +127,7 @@ export class VoxelRenderer {
 
     this.camera = new THREE.PerspectiveCamera(options.fov ?? 70, 1, 0.05, 1000);
     this.camera.rotation.order = "YXZ";
+    this.heldCamera = new THREE.PerspectiveCamera(options.fov ?? 70, 1, 0.01, 10);
 
     const far = this.renderDistance * CHUNK_SIZE;
     this.scene.fog = new THREE.Fog(sky, far * 0.55, far);
@@ -105,6 +138,18 @@ export class VoxelRenderer {
     );
     this.highlight.visible = false;
     this.scene.add(this.highlight);
+
+    // A cone pointing down at a goal, drawn over everything and ignoring fog, so
+    // it can be found from anywhere.
+    const cone = new THREE.ConeGeometry(0.35, 0.8, 16);
+    cone.rotateX(Math.PI);
+    this.waypoint = new THREE.Mesh(
+      cone,
+      new THREE.MeshBasicMaterial({ color: 0xe8452c, depthTest: false, depthWrite: false, transparent: true, opacity: 0.92, fog: false }),
+    );
+    this.waypoint.renderOrder = 999;
+    this.waypoint.visible = false;
+    this.scene.add(this.waypoint);
   }
 
   /** Feed in what ClientWorld.apply returned. */
@@ -140,6 +185,60 @@ export class VoxelRenderer {
   }
 
   /**
+   * Makes a voxel model available to entities by name. Defining a name again
+   * replaces the model for entities drawn from then on.
+   */
+  defineModel(name: string, model: VoxelModel): void {
+    const mesh = meshModel(model, { linearColors: true });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+    geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 3));
+    geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    geometry.computeBoundingSphere();
+    const old = this.models.get(name);
+    this.models.set(name, geometry);
+    if (old) {
+      // Redraw anything using the old one, then free it.
+      for (const [id, figure] of this.figures) if (figure.key.endsWith(`|${name}`)) this.removeFigure(id);
+      if (this.held?.name === name) {
+        const { options } = this.held;
+        this.setHeld(null);
+        this.setHeld(name, options);
+      }
+      old.dispose();
+    }
+  }
+
+  /**
+   * Shows a model held in front of the camera, low and to the right, the way a
+   * first-person game shows what the player carries. Null puts it away. It is
+   * drawn after the world with the depth cleared, so it never sinks into a wall.
+   */
+  setHeld(name: string | null, options: HeldOptions = {}): void {
+    if (this.held && (this.held.name !== name || name === null)) {
+      this.heldScene.remove(this.held.mesh);
+      this.held = null;
+    }
+    if (name === null || this.held) return;
+    const geometry = this.models.get(name);
+    if (!geometry) throw new Error(`No model named "${name}". Call defineModel first.`);
+    const mesh = new THREE.Mesh(geometry, this.figureMaterial);
+    const o = { ...HELD_DEFAULTS, ...options };
+    mesh.rotation.set(o.pitch, o.yaw, 0, "YXZ");
+    mesh.scale.setScalar(o.scale);
+    this.heldScene.add(mesh);
+    this.held = { name, mesh, options };
+    this.placeHeld();
+  }
+
+  private placeHeld(): void {
+    if (!this.held) return;
+    const [x, y, z] = this.held.options.offset ?? HELD_DEFAULTS.offset;
+    this.held.mesh.position.set(x * Math.min(1, this.heldCamera.aspect), y, z);
+  }
+
+  /**
    * Draws these entities as simple figures, and removes any not in the list.
    * Leave the local player out; the camera is inside them.
    */
@@ -147,19 +246,28 @@ export class VoxelRenderer {
     const seen = new Set<string>();
     for (const look of looks) {
       seen.add(look.id);
-      const key = `${look.size.join(",")}|${look.body}|${look.head}`;
+      const key = `${look.size.join(",")}|${look.body}|${look.head}|${look.model ?? ""}`;
       let figure = this.figures.get(look.id);
       if (!figure || figure.key !== key) {
         if (figure) this.removeFigure(look.id);
-        const [w, h, d] = look.size;
-        const bodyHeight = h * 0.72;
-        const body = new THREE.Mesh(shadedBox(w, bodyHeight, d * 0.8, look.body), this.figureMaterial);
-        body.position.y = bodyHeight / 2;
-        const headSize = Math.min(w, h - bodyHeight) * 0.95;
-        const head = new THREE.Mesh(shadedBox(headSize, h - bodyHeight, headSize, look.head), this.figureMaterial);
-        head.position.y = bodyHeight + (h - bodyHeight) / 2;
         const group = new THREE.Group();
-        group.add(body, head);
+        if (look.model !== undefined) {
+          const geometry = this.models.get(look.model);
+          if (!geometry) throw new Error(`No model named "${look.model}". Call defineModel first.`);
+          // Shared by every entity drawn with this model, so removeFigure leaves it alone.
+          const mesh = new THREE.Mesh(geometry, this.figureMaterial);
+          mesh.userData.shared = true;
+          group.add(mesh);
+        } else {
+          const [w, h, d] = look.size;
+          const bodyHeight = h * 0.72;
+          const body = new THREE.Mesh(shadedBox(w, bodyHeight, d * 0.8, look.body ?? 0x808080), this.figureMaterial);
+          body.position.y = bodyHeight / 2;
+          const headSize = Math.min(w, h - bodyHeight) * 0.95;
+          const head = new THREE.Mesh(shadedBox(headSize, h - bodyHeight, headSize, look.head ?? 0x808080), this.figureMaterial);
+          head.position.y = bodyHeight + (h - bodyHeight) / 2;
+          group.add(body, head);
+        }
         this.scene.add(group);
         figure = { group, key };
         this.figures.set(look.id, figure);
@@ -186,6 +294,17 @@ export class VoxelRenderer {
     }
   }
 
+  /**
+   * Marks a point in the world with a bouncing cone, or clears it with null.
+   * `position` is the ground it points at, such as an entity's feet or the top
+   * of a block.
+   */
+  setWaypoint(position: Vec3 | null, options: { color?: number; lift?: number } = {}): void {
+    this.waypointAt = position ? [position[0], position[1] + (options.lift ?? 2.4), position[2]] : null;
+    this.waypoint.visible = !!position;
+    if (options.color !== undefined) (this.waypoint.material as THREE.MeshBasicMaterial).color.setHex(options.color);
+  }
+
   /** Places the camera. `yaw` and `pitch` follow the same convention as core's viewDirection. */
   setView(eye: Vec3, yaw: number, pitch: number): void {
     this.camera.position.set(eye[0], eye[1], eye[2]);
@@ -205,12 +324,31 @@ export class VoxelRenderer {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(1, height);
     this.camera.updateProjectionMatrix();
+    this.heldCamera.aspect = this.camera.aspect;
+    this.heldCamera.updateProjectionMatrix();
+    this.placeHeld();
   }
 
   render(store: ChunkStore): void {
+    const t = this.clock.getElapsedTime();
+    if (this.waypointAt) {
+      const [x, y, z] = this.waypointAt;
+      this.waypoint.position.set(x, y + Math.abs(Math.sin(t * 3)) * 0.5, z);
+      this.waypoint.rotation.y = t * 1.5;
+      // Small up close, larger far away, so it neither looms over the goal nor
+      // vanishes across the map.
+      const d = this.camera.position.distanceTo(this.waypoint.position);
+      this.waypoint.scale.setScalar(Math.min(4, Math.max(0.5, d / 12)));
+    }
     this.trackRange(store);
     this.remesh(store);
     this.renderer.render(this.scene, this.camera);
+    if (this.held) {
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.heldScene, this.heldCamera);
+      this.renderer.autoClear = true;
+    }
   }
 
   /** Number of chunk meshes currently drawn. */
@@ -221,7 +359,12 @@ export class VoxelRenderer {
   dispose(): void {
     for (const key of [...this.meshes.keys()]) this.removeMesh(key);
     for (const id of [...this.figures.keys()]) this.removeFigure(id);
+    this.setHeld(null);
+    for (const geometry of this.models.values()) geometry.dispose();
+    this.models.clear();
     this.figureMaterial.dispose();
+    this.waypoint.geometry.dispose();
+    (this.waypoint.material as THREE.Material).dispose();
     this.material.dispose();
     this.highlight.geometry.dispose();
     (this.highlight.material as THREE.Material).dispose();
@@ -308,7 +451,7 @@ export class VoxelRenderer {
     const figure = this.figures.get(id);
     if (!figure) return;
     this.scene.remove(figure.group);
-    for (const child of figure.group.children) (child as THREE.Mesh).geometry.dispose();
+    for (const child of figure.group.children) if (!child.userData.shared) (child as THREE.Mesh).geometry.dispose();
     this.figures.delete(id);
   }
 

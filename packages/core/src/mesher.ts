@@ -2,6 +2,7 @@ import { AIR, type BlockRegistry } from "./blocks";
 import { CHUNK_SIZE, voxelIndex } from "./chunk";
 import type { Vec3 } from "./math";
 import { getBlock, getChunk, type ChunkStore } from "./world";
+import { DEFAULT_SHADE, FACES, srgbToLinear } from "./faces";
 
 /**
  * Geometry for one chunk, in chunk-local coordinates (0 to 16 on each axis).
@@ -20,29 +21,6 @@ export interface MeshOptions {
   linearColors?: boolean;
   /** Brightness per face direction, a cheap stand-in for lighting. */
   shade?: { top: number; bottom: number; x: number; z: number };
-}
-
-const DEFAULT_SHADE = { top: 1, bottom: 0.5, x: 0.8, z: 0.65 };
-
-interface Face {
-  normal: Vec3;
-  corners: [Vec3, Vec3, Vec3, Vec3];
-  color: "top" | "side" | "bottom";
-  shade: "top" | "bottom" | "x" | "z";
-}
-
-// Corners wind counter-clockwise seen from outside the cube.
-const FACES: Face[] = [
-  { normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], color: "side", shade: "x" },
-  { normal: [-1, 0, 0], corners: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]], color: "side", shade: "x" },
-  { normal: [0, 1, 0], corners: [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]], color: "top", shade: "top" },
-  { normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], color: "bottom", shade: "bottom" },
-  { normal: [0, 0, 1], corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], color: "side", shade: "z" },
-  { normal: [0, 0, -1], corners: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]], color: "side", shade: "z" },
-];
-
-function srgbToLinear(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
 /**

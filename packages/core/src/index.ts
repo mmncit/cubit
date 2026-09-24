@@ -11,6 +11,7 @@ export * from "./json";
 export * from "./map";
 export * from "./math";
 export * from "./mesher";
+export * from "./model";
 export * from "./patrol";
 export * from "./physics";
 export * from "./protocol";
