@@ -239,9 +239,10 @@ export class VoxelRenderer {
       const [x, y, z] = this.waypointAt;
       this.waypoint.position.set(x, y + Math.abs(Math.sin(t * 3)) * 0.5, z);
       this.waypoint.rotation.y = t * 1.5;
-      // Grow with distance so it stays visible far away without looming up close.
+      // Small up close, larger far away, so it neither looms over the goal nor
+      // vanishes across the map.
       const d = this.camera.position.distanceTo(this.waypoint.position);
-      this.waypoint.scale.setScalar(Math.max(1, d / 14));
+      this.waypoint.scale.setScalar(Math.min(4, Math.max(0.5, d / 12)));
     }
     this.trackRange(store);
     this.remesh(store);
