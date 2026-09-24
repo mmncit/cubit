@@ -103,7 +103,9 @@ Its brand palette and My Next Coffee copy linting do not apply here.
 
 - Local identity must be `mmncit <mmncit@gmail.com>`.
 - The remote is `git@github-personal:mmncit/cubit.git`.
-- Branch, open a PR, squash-merge. Do not push to `main`.
+- Commit straight to `main` and push; no PR is needed. The owner decided this on
+  2026-09-23. Run `pnpm test` and `pnpm typecheck` before every push, since
+  nothing else checks the branch.
 
 ## Known gaps
 
