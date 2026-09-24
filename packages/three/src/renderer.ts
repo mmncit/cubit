@@ -3,7 +3,9 @@ import {
   CHUNK_SIZE,
   chunkKey,
   meshChunk,
+  atlasLayout,
   meshModel,
+  paintAtlas,
   parseChunkKey,
   toChunk,
   type BlockRegistry,
@@ -11,6 +13,7 @@ import {
   type ChunkStore,
   type ClientChange,
   type Vec3,
+  type AtlasLayout,
   type VoxelModel,
 } from "@cubit/core";
 
@@ -43,6 +46,8 @@ export interface VoxelRendererOptions {
   antialias?: boolean;
   /** Most chunks remeshed per frame, so a burst of changes never stalls a frame. */
   remeshBudget?: number;
+  /** Draw the blocks' texture styles. On by default; off gives flat colours. */
+  textures?: boolean;
 }
 
 /**
@@ -92,6 +97,7 @@ export class VoxelRenderer {
   readonly renderer: THREE.WebGLRenderer;
   private readonly registry: BlockRegistry;
   private readonly material = new THREE.MeshBasicMaterial({ vertexColors: true });
+  private readonly atlas: AtlasLayout | undefined;
   private readonly meshes = new Map<ChunkKey, THREE.Mesh>();
   private readonly empty = new Set<ChunkKey>();
   private readonly dirty = new Set<ChunkKey>();
@@ -113,6 +119,18 @@ export class VoxelRenderer {
 
   constructor(options: VoxelRendererOptions) {
     this.registry = options.registry;
+    if (options.textures !== false) {
+      // One small atlas of every style the blocks use, multiplied into their colours.
+      // Pixels stay crisp up close and blend smoothly far away.
+      this.atlas = atlasLayout(this.registry.all().flatMap((b) => [b.textures.top, b.textures.side, b.textures.bottom]));
+      const texture = new THREE.DataTexture(paintAtlas(this.atlas), this.atlas.width, this.atlas.height, THREE.RGBAFormat);
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.generateMipmaps = true;
+      texture.colorSpace = THREE.NoColorSpace; // grey levels are multipliers, not colours
+      texture.needsUpdate = true;
+      this.material.map = texture;
+    }
     this.renderDistance = options.renderDistance ?? 4;
     this.remeshBudget = options.remeshBudget ?? 4;
     const sky = options.sky ?? 0x9fc9e8;
@@ -368,6 +386,7 @@ export class VoxelRenderer {
     this.figureMaterial.dispose();
     this.waypoint.geometry.dispose();
     (this.waypoint.material as THREE.Material).dispose();
+    this.material.map?.dispose();
     this.material.dispose();
     this.highlight.geometry.dispose();
     (this.highlight.material as THREE.Material).dispose();
@@ -422,7 +441,7 @@ export class VoxelRenderer {
         continue;
       }
       budget--;
-      const mesh = meshChunk(store, this.registry, coords, { linearColors: true });
+      const mesh = meshChunk(store, this.registry, coords, { linearColors: true, atlas: this.atlas });
       if (mesh.faceCount === 0) {
         this.removeMesh(key);
         this.empty.add(key);
@@ -432,6 +451,7 @@ export class VoxelRenderer {
       geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
       geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
       geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 3));
+      if (this.atlas) geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
       geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
       geometry.computeBoundingSphere();
 

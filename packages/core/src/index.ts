@@ -20,5 +20,6 @@ export * from "./rng";
 export * from "./sight";
 export * from "./simulation";
 export * from "./snapshot";
+export * from "./textures";
 export * from "./topdown";
 export * from "./world";

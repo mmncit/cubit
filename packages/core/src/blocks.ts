@@ -1,7 +1,15 @@
+import { isTextureStyle, TEXTURE_STYLES, type TextureStyle } from "./textures";
+
 export interface BlockColors {
   top: number;
   side: number;
   bottom: number;
+}
+
+export interface BlockTextures {
+  top: TextureStyle;
+  side: TextureStyle;
+  bottom: TextureStyle;
 }
 
 export interface BlockDef {
@@ -13,6 +21,8 @@ export interface BlockDef {
   opaque: boolean;
   /** 0xRRGGBB in sRGB, per face direction. */
   colors: BlockColors;
+  /** Surface pattern per face direction, multiplied into the colour. "flat" is none. */
+  textures: BlockTextures;
 }
 
 export interface BlockInput {
@@ -23,6 +33,11 @@ export interface BlockInput {
   color?: number;
   /** Per-face colours. Missing faces fall back to `color`, then to `side`. */
   colors?: Partial<BlockColors>;
+  /**
+   * A texture style from TEXTURE_STYLES for every face, or per face. Missing
+   * faces fall back to `side`, then to "flat".
+   */
+  texture?: string | Partial<Record<keyof BlockTextures, string>>;
 }
 
 export const AIR = 0;
@@ -35,7 +50,7 @@ export const AIR_NAME = "air";
  */
 export class BlockRegistry {
   private readonly defs: BlockDef[] = [
-    { name: AIR_NAME, solid: false, opaque: false, colors: { top: 0, side: 0, bottom: 0 } },
+    { name: AIR_NAME, solid: false, opaque: false, colors: { top: 0, side: 0, bottom: 0 }, textures: { top: "flat", side: "flat", bottom: "flat" } },
   ];
   private readonly byName = new Map<string, number>([[AIR_NAME, AIR]]);
 
@@ -55,12 +70,27 @@ export class BlockRegistry {
       side: input.colors?.side ?? input.color ?? base,
       bottom: input.colors?.bottom ?? input.color ?? base,
     };
+    const faces = typeof input.texture === "string" ? { side: input.texture } : input.texture ?? {};
+    const style = (name: string | undefined): TextureStyle => {
+      if (name === undefined) return "flat";
+      if (!isTextureStyle(name)) {
+        throw new Error(`Block "${input.name}" has an unknown texture "${name}". Known: ${TEXTURE_STYLES.join(", ")}.`);
+      }
+      return name;
+    };
+    const side = style(faces.side);
+    const textures: BlockTextures = {
+      top: typeof input.texture === "string" ? side : faces.top !== undefined ? style(faces.top) : side,
+      side,
+      bottom: typeof input.texture === "string" ? side : faces.bottom !== undefined ? style(faces.bottom) : side,
+    };
     const id = this.defs.length;
     this.defs.push({
       name: input.name,
       solid: input.solid ?? true,
       opaque: input.opaque ?? true,
       colors,
+      textures,
     });
     this.byName.set(input.name, id);
     return id;

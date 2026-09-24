@@ -64,8 +64,13 @@ repo passed with the feature it claimed to test switched off, and was rewritten.
 
 Write engine code from scratch. Do not copy code, textures, models or fonts from
 other voxel projects unless their licence allows it, and never use Minecraft's
-textures or fonts. The sandbox uses flat colours for this reason as well as for
-download size.
+textures or fonts. For the same reason, and for download size, block textures
+are painted in code: `packages/core/src/textures.ts` draws each style as a
+16-pixel grey pattern that multiplies the block's colour, and the renderer packs
+the styles a registry uses into one small atlas. Add a style there rather than
+shipping image files. Keep every style tileable (use `noise` with cell counts,
+never scaled coordinates) and no darker than 0.65, so a block's colour still
+reads.
 
 ## Packages and releases
 

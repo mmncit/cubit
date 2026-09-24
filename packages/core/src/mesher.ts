@@ -2,7 +2,8 @@ import { AIR, type BlockRegistry } from "./blocks";
 import { CHUNK_SIZE, voxelIndex } from "./chunk";
 import type { Vec3 } from "./math";
 import { getBlock, getChunk, type ChunkStore } from "./world";
-import { DEFAULT_SHADE, FACES, srgbToLinear } from "./faces";
+import { DEFAULT_SHADE, FACES, faceUv, meshArrays, srgbToLinear } from "./faces";
+import type { AtlasLayout } from "./textures";
 
 /**
  * Geometry for one chunk, in chunk-local coordinates (0 to 16 on each axis).
@@ -12,6 +13,8 @@ export interface ChunkMesh {
   positions: Float32Array;
   normals: Float32Array;
   colors: Float32Array;
+  /** Texture coordinates into the atlas, two per vertex. Zeros without an atlas. */
+  uvs: Float32Array;
   indices: Uint16Array;
   faceCount: number;
 }
@@ -21,6 +24,8 @@ export interface MeshOptions {
   linearColors?: boolean;
   /** Brightness per face direction, a cheap stand-in for lighting. */
   shade?: { top: number; bottom: number; x: number; z: number };
+  /** Where each texture style sits in the renderer's atlas. Without it, no texture coordinates. */
+  atlas?: AtlasLayout;
 }
 
 /**
@@ -39,6 +44,7 @@ export function meshChunk(
     positions: new Float32Array(0),
     normals: new Float32Array(0),
     colors: new Float32Array(0),
+    uvs: new Float32Array(0),
     indices: new Uint16Array(0),
     faceCount: 0,
   };
@@ -62,6 +68,8 @@ export function meshChunk(
   const positions: number[] = [];
   const normals: number[] = [];
   const colors: number[] = [];
+  const uvs: number[] = [];
+  const atlas = options.atlas;
   let faceCount = 0;
 
   for (let ly = 0; ly < CHUNK_SIZE; ly++) {
@@ -80,10 +88,15 @@ export function meshChunk(
           const r = toColor(((hex >> 16) & 0xff) / 255) * k;
           const g = toColor(((hex >> 8) & 0xff) / 255) * k;
           const b = toColor((hex & 0xff) / 255) * k;
+          const rect = atlas?.rects.get(def.textures[face.color]) ?? atlas?.rects.get("flat");
           for (const corner of face.corners) {
             positions.push(lx + corner[0], ly + corner[1], lz + corner[2]);
             normals.push(face.normal[0], face.normal[1], face.normal[2]);
             colors.push(r, g, b);
+            if (rect) {
+              const [u, v] = faceUv(face.normal, corner);
+              uvs.push(rect[0] + (rect[2] - rect[0]) * u, rect[1] + (rect[3] - rect[1]) * v);
+            } else uvs.push(0, 0);
           }
           faceCount++;
         }
@@ -93,17 +106,5 @@ export function meshChunk(
 
   // A 16^3 chunk emits at most 12288 faces (a checkerboard), which is 49152
   // vertices, so 16-bit indices are always enough.
-  const indices = new Uint16Array(faceCount * 6);
-  for (let f = 0; f < faceCount; f++) {
-    const v = f * 4;
-    indices.set([v, v + 1, v + 2, v, v + 2, v + 3], f * 6);
-  }
-
-  return {
-    positions: Float32Array.from(positions),
-    normals: Float32Array.from(normals),
-    colors: Float32Array.from(colors),
-    indices,
-    faceCount,
-  };
+  return meshArrays(positions, normals, colors, faceCount, uvs);
 }

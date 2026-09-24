@@ -35,7 +35,17 @@ export function faceColor(hex: number, k: number, linear: boolean): [number, num
 }
 
 /** Packs quads, four vertices each, into a mesh with two triangles a face. */
-export function meshArrays(positions: number[], normals: number[], colors: number[], faceCount: number): ChunkMesh {
+/**
+ * Where a face corner falls in its texture, 0 to 1 on each axis. Side faces run
+ * the texture upright; top and bottom faces lay it along x and z.
+ */
+export function faceUv(normal: Vec3, corner: Vec3): [number, number] {
+  if (normal[1] !== 0) return [corner[0], corner[2]];
+  const u = normal[0] !== 0 ? corner[2] : corner[0];
+  return [u, 1 - corner[1]];
+}
+
+export function meshArrays(positions: number[], normals: number[], colors: number[], faceCount: number, uvs: number[] = []): ChunkMesh {
   const indices = new Uint16Array(faceCount * 6);
   for (let f = 0; f < faceCount; f++) {
     const v = f * 4;
@@ -45,6 +55,7 @@ export function meshArrays(positions: number[], normals: number[], colors: numbe
     positions: Float32Array.from(positions),
     normals: Float32Array.from(normals),
     colors: Float32Array.from(colors),
+    uvs: uvs.length ? Float32Array.from(uvs) : new Float32Array(faceCount * 8),
     indices,
     faceCount,
   };
