@@ -1,6 +1,6 @@
 {
   "name": "@mmncit/cubit-input",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Keyboard, mouse and touch input mapped to abstract game actions.",
   "type": "module",
   "repository": {

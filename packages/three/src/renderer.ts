@@ -259,7 +259,7 @@ export class VoxelRenderer {
   private held: { name: string; mesh: THREE.Object3D; options: HeldOptions } | null = null;
   private readonly waypoint: THREE.Mesh;
   private waypointAt: Vec3 | null = null;
-  private readonly clock = new THREE.Clock();
+  private readonly timer = new THREE.Timer();
   private readonly renderDistance: number;
   private readonly remeshBudget: number;
   private cameraChunk = "";
@@ -311,7 +311,8 @@ export class VoxelRenderer {
       this.scene.add(this.skyLight, this.sun, this.sun.target);
       if (this.shadows) {
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        // three's soft filtering is its PCF map now; the separate soft type is gone.
+        this.renderer.shadowMap.type = THREE.PCFShadowMap;
         this.shadowMapSize = options.shadowMapSize ?? 2048;
         this.shadowExtent = Math.min(56, far * 0.7);
         const shadow = this.sun.shadow;
@@ -604,7 +605,8 @@ export class VoxelRenderer {
   }
 
   render(store: ChunkStore): void {
-    const t = this.clock.getElapsedTime();
+    this.timer.update();
+    const t = this.timer.getElapsed();
     if (this.waypointAt) {
       const [x, y, z] = this.waypointAt;
       this.waypoint.position.set(x, y + Math.abs(Math.sin(t * 3)) * 0.5, z);
@@ -644,6 +646,7 @@ export class VoxelRenderer {
   }
 
   dispose(): void {
+    this.timer.dispose();
     for (const key of [...this.meshes.keys()]) this.removeMesh(key);
     for (const id of [...this.figures.keys()]) this.removeFigure(id);
     this.setHeld(null);
