@@ -4,6 +4,7 @@ import {
   chunkKey,
   meshChunk,
   atlasLayout,
+  glowCentre,
   meshModel,
   paintAtlas,
   parseChunkKey,
@@ -16,6 +17,40 @@ import {
   type AtlasLayout,
   type VoxelModel,
 } from "@cubit/core";
+
+/** A model as the renderer keeps it: the ordinary part, the part that glows, and where its light is. */
+interface ModelParts {
+  rest: THREE.BufferGeometry;
+  glow: THREE.BufferGeometry | null;
+  halo: { centre: Vec3; radius: number } | null;
+}
+
+function geometryOf(mesh: ReturnType<typeof meshModel>): THREE.BufferGeometry | null {
+  if (mesh.faceCount === 0) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+  geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 3));
+  geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+/** A soft round light, bright in the middle and gone at the edge, drawn once. */
+function haloTexture(): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 64;
+  const g = canvas.getContext("2d")!;
+  const gradient = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.35, "rgba(255,255,255,0.45)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = gradient;
+  g.fillRect(0, 0, 64, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
 
 /** Where a held model sits in front of the camera. */
 export interface HeldOptions {
@@ -104,12 +139,17 @@ export class VoxelRenderer {
   private readonly highlight: THREE.LineSegments;
   private readonly figureMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
   private readonly figures = new Map<string, { group: THREE.Group; key: string }>();
-  private readonly models = new Map<string, THREE.BufferGeometry>();
+  private readonly models = new Map<string, ModelParts>();
+  // Glowing faces are drawn at full brightness and seen through fog; their halo
+  // is faint by day and strong at dusk.
+  private readonly glowMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
+  private haloMaterial: THREE.SpriteMaterial | null = null;
+  private haloStrength = 0;
   // What the player holds: its own scene and a camera fixed at the origin, drawn
   // after the world so it sits in front of everything.
   private readonly heldScene = new THREE.Scene();
   private readonly heldCamera: THREE.PerspectiveCamera;
-  private held: { name: string; mesh: THREE.Mesh; options: HeldOptions } | null = null;
+  private held: { name: string; mesh: THREE.Object3D; options: HeldOptions } | null = null;
   private readonly waypoint: THREE.Mesh;
   private waypointAt: Vec3 | null = null;
   private readonly clock = new THREE.Clock();
@@ -207,15 +247,10 @@ export class VoxelRenderer {
    * replaces the model for entities drawn from then on.
    */
   defineModel(name: string, model: VoxelModel): void {
-    const mesh = meshModel(model, { linearColors: true });
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
-    geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 3));
-    geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-    geometry.computeBoundingSphere();
+    const rest = geometryOf(meshModel(model, { linearColors: true, part: "rest" })) ?? new THREE.BufferGeometry();
+    const glow = geometryOf(meshModel(model, { linearColors: true, part: "glow" }));
     const old = this.models.get(name);
-    this.models.set(name, geometry);
+    this.models.set(name, { rest, glow, halo: glowCentre(model) });
     if (old) {
       // Redraw anything using the old one, then free it.
       for (const [id, figure] of this.figures) if (figure.key.endsWith(`|${name}`)) this.removeFigure(id);
@@ -224,8 +259,36 @@ export class VoxelRenderer {
         this.setHeld(null);
         this.setHeld(name, options);
       }
-      old.dispose();
+      old.rest.dispose();
+      old.glow?.dispose();
     }
+  }
+
+  /** The meshes that draw a model, sharing its geometry. The halo is left out of the held view. */
+  private modelGroup(name: string, halo: boolean): THREE.Group {
+    const parts = this.models.get(name);
+    if (!parts) throw new Error(`No model named "${name}". Call defineModel first.`);
+    const group = new THREE.Group();
+    const rest = new THREE.Mesh(parts.rest, this.figureMaterial);
+    rest.userData.shared = true;
+    group.add(rest);
+    if (parts.glow) {
+      const glow = new THREE.Mesh(parts.glow, this.glowMaterial);
+      glow.userData.shared = true;
+      group.add(glow);
+    }
+    if (halo && parts.halo) {
+      this.haloMaterial ??= new THREE.SpriteMaterial({
+        map: haloTexture(), color: 0xffc766, blending: THREE.AdditiveBlending,
+        transparent: true, depthWrite: false, fog: false, opacity: this.haloStrength,
+      });
+      const sprite = new THREE.Sprite(this.haloMaterial);
+      sprite.position.set(...parts.halo.centre);
+      sprite.scale.setScalar(Math.max(0.6, parts.halo.radius * 7));
+      sprite.userData.shared = true;
+      group.add(sprite);
+    }
+    return group;
   }
 
   /**
@@ -239,9 +302,7 @@ export class VoxelRenderer {
       this.held = null;
     }
     if (name === null || this.held) return;
-    const geometry = this.models.get(name);
-    if (!geometry) throw new Error(`No model named "${name}". Call defineModel first.`);
-    const mesh = new THREE.Mesh(geometry, this.figureMaterial);
+    const mesh = this.modelGroup(name, false);
     const o = { ...HELD_DEFAULTS, ...options };
     mesh.rotation.set(o.pitch, o.yaw, 0, "YXZ");
     mesh.scale.setScalar(o.scale);
@@ -268,14 +329,10 @@ export class VoxelRenderer {
       let figure = this.figures.get(look.id);
       if (!figure || figure.key !== key) {
         if (figure) this.removeFigure(look.id);
-        const group = new THREE.Group();
+        let group = new THREE.Group();
         if (look.model !== undefined) {
-          const geometry = this.models.get(look.model);
-          if (!geometry) throw new Error(`No model named "${look.model}". Call defineModel first.`);
-          // Shared by every entity drawn with this model, so removeFigure leaves it alone.
-          const mesh = new THREE.Mesh(geometry, this.figureMaterial);
-          mesh.userData.shared = true;
-          group.add(mesh);
+          // Shares the model's geometry with every entity drawn with it, so removeFigure leaves it alone.
+          group = this.modelGroup(look.model, true);
         } else {
           const [w, h, d] = look.size;
           const bodyHeight = h * 0.72;
@@ -309,6 +366,8 @@ export class VoxelRenderer {
       const b = Math.max(0, Math.min(1, options.brightness));
       this.material.color.setRGB(b, b, b);
       this.figureMaterial.color.setRGB(b, b, b);
+      this.haloStrength = Math.max(0, Math.min(0.9, (0.95 - b) * 1.8));
+      if (this.haloMaterial) this.haloMaterial.opacity = this.haloStrength;
     }
   }
 
@@ -381,9 +440,15 @@ export class VoxelRenderer {
     for (const key of [...this.meshes.keys()]) this.removeMesh(key);
     for (const id of [...this.figures.keys()]) this.removeFigure(id);
     this.setHeld(null);
-    for (const geometry of this.models.values()) geometry.dispose();
+    for (const parts of this.models.values()) {
+      parts.rest.dispose();
+      parts.glow?.dispose();
+    }
     this.models.clear();
     this.figureMaterial.dispose();
+    this.glowMaterial.dispose();
+    this.haloMaterial?.map?.dispose();
+    this.haloMaterial?.dispose();
     this.waypoint.geometry.dispose();
     (this.waypoint.material as THREE.Material).dispose();
     this.material.map?.dispose();
@@ -474,7 +539,7 @@ export class VoxelRenderer {
     const figure = this.figures.get(id);
     if (!figure) return;
     this.scene.remove(figure.group);
-    for (const child of figure.group.children) if (!child.userData.shared) (child as THREE.Mesh).geometry.dispose();
+    for (const child of figure.group.children) if (!child.userData.shared) (child as THREE.Mesh).geometry?.dispose();
     this.figures.delete(id);
   }
 
