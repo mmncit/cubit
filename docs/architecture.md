@@ -94,6 +94,19 @@ The mesher is a pure function in core that returns typed arrays, so it can move
 into a web worker without changes. The renderer remeshes at most a few chunks per
 frame, nearest first, and drops meshes that leave the render distance.
 
+A block defined with `liquid: true` (water) is neither solid nor opaque unless it
+says so. The mesher can build the solid world and the liquids apart
+(`liquids: "skip"` or `"only"`), and a liquid's open surface sits
+`LIQUID_SURFACE_DROP` below the top of its block. The renderer draws liquids in a
+second mesh per chunk, see-through, from both sides, after everything solid and
+without writing depth, so what lies under the water still shows. A world with no
+liquid meshes exactly as it did before.
+
+Physics reports landings. `stepEntity` returns how fast a walker was falling
+when it landed, and the simulation hands the last tick's landings to game
+systems as `landings`, by entity id. It is not part of the state, so snapshots
+do not change; a game uses it to judge a hard landing.
+
 ## Touch first
 
 The Qarya concept that prompted this engine makes a roughly $100 Android phone the

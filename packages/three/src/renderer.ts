@@ -11,6 +11,7 @@ import {
   toChunk,
   type BlockRegistry,
   type ChunkKey,
+  type ChunkMesh,
   type ChunkStore,
   type ClientChange,
   type Vec3,
@@ -227,6 +228,9 @@ export class VoxelRenderer {
   private readonly material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial;
   private readonly atlas: AtlasLayout | undefined;
   private readonly meshes = new Map<ChunkKey, THREE.Mesh>();
+  // Liquids get a mesh of their own per chunk, drawn see-through after everything solid.
+  private readonly liquidMeshes = new Map<ChunkKey, THREE.Mesh>();
+  private readonly liquidMaterial: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial;
   private readonly empty = new Set<ChunkKey>();
   private readonly dirty = new Set<ChunkKey>();
   private readonly highlight: THREE.LineSegments;
@@ -283,6 +287,9 @@ export class VoxelRenderer {
       texture.needsUpdate = true;
       this.material.map = texture;
     }
+    // See-through, seen from above and below, and never hiding what lies behind it in the depth buffer.
+    this.liquidMaterial = new Material({ vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false, side: THREE.DoubleSide });
+    this.liquidMaterial.map = this.material.map;
     this.renderDistance = options.renderDistance ?? 4;
     this.remeshBudget = options.remeshBudget ?? 4;
     const sky = options.sky ?? 0x9fc9e8;
@@ -353,7 +360,7 @@ export class VoxelRenderer {
     for (const change of changes) {
       switch (change.type) {
         case "reset":
-          for (const key of [...this.meshes.keys()]) this.removeMesh(key);
+          for (const key of this.meshedKeys()) this.removeMesh(key);
           this.empty.clear();
           this.dirty.clear();
           this.cameraChunk = "";
@@ -647,7 +654,7 @@ export class VoxelRenderer {
 
   dispose(): void {
     this.timer.dispose();
-    for (const key of [...this.meshes.keys()]) this.removeMesh(key);
+    for (const key of this.meshedKeys()) this.removeMesh(key);
     for (const id of [...this.figures.keys()]) this.removeFigure(id);
     this.setHeld(null);
     for (const parts of this.models.values()) {
@@ -664,6 +671,7 @@ export class VoxelRenderer {
     (this.waypoint.material as THREE.Material).dispose();
     this.material.map?.dispose();
     this.material.dispose();
+    this.liquidMaterial.dispose();
     this.highlight.geometry.dispose();
     (this.highlight.material as THREE.Material).dispose();
     this.renderer.dispose();
@@ -691,11 +699,11 @@ export class VoxelRenderer {
     const current = `${px},${py},${pz}`;
     if (current === this.cameraChunk) return;
     this.cameraChunk = current;
-    for (const key of [...this.meshes.keys()]) {
+    for (const key of this.meshedKeys()) {
       if (!this.inRange(key)) this.removeMesh(key);
     }
     for (const key of store.chunks.keys()) {
-      if (this.inRange(key) && !this.meshes.has(key) && !this.empty.has(key)) this.dirty.add(key);
+      if (this.inRange(key) && !this.meshes.has(key) && !this.liquidMeshes.has(key) && !this.empty.has(key)) this.dirty.add(key);
     }
   }
 
@@ -717,34 +725,55 @@ export class VoxelRenderer {
         continue;
       }
       budget--;
-      const mesh = meshChunk(store, this.registry, coords, { linearColors: true, atlas: this.atlas, ...(this.lit ? { shade: LIT_SHADE } : {}) });
-      if (mesh.faceCount === 0) {
+      const base = { linearColors: true, atlas: this.atlas, ...(this.lit ? { shade: LIT_SHADE } : {}) };
+      const solid = meshChunk(store, this.registry, coords, { ...base, liquids: "skip" });
+      const liquid = meshChunk(store, this.registry, coords, { ...base, liquids: "only" });
+      if (solid.faceCount === 0 && liquid.faceCount === 0) {
         this.removeMesh(key);
         this.empty.add(key);
         continue;
       }
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
-      geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
-      geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 3));
-      if (this.atlas) geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
-      geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-      geometry.computeBoundingSphere();
-
-      const existing = this.meshes.get(key);
-      if (existing) {
-        existing.geometry.dispose();
-        existing.geometry = geometry;
-      } else {
-        const object = new THREE.Mesh(geometry, this.material);
-        object.castShadow = object.receiveShadow = this.shadows;
-        object.position.set(coords[0] * CHUNK_SIZE, coords[1] * CHUNK_SIZE, coords[2] * CHUNK_SIZE);
-        object.matrixAutoUpdate = false;
-        object.updateMatrix();
-        this.scene.add(object);
-        this.meshes.set(key, object);
-      }
+      this.placeMesh(this.meshes, key, coords, solid, this.material, false);
+      this.placeMesh(this.liquidMeshes, key, coords, liquid, this.liquidMaterial, true);
     }
+  }
+
+  /** Puts one chunk's mesh in the scene, replaces its geometry, or takes it away if it has no faces. */
+  private placeMesh(
+    into: Map<ChunkKey, THREE.Mesh>, key: ChunkKey, coords: Vec3, mesh: ChunkMesh,
+    material: THREE.Material, liquid: boolean,
+  ): void {
+    const existing = into.get(key);
+    if (mesh.faceCount === 0) {
+      if (existing) {
+        this.scene.remove(existing);
+        existing.geometry.dispose();
+        into.delete(key);
+      }
+      return;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+    geometry.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(mesh.colors, 3));
+    if (this.atlas) geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
+    geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    geometry.computeBoundingSphere();
+    if (existing) {
+      existing.geometry.dispose();
+      existing.geometry = geometry;
+      return;
+    }
+    const object = new THREE.Mesh(geometry, material);
+    // A liquid takes shadows but casts none, and is drawn after the solid world.
+    object.castShadow = this.shadows && !liquid;
+    object.receiveShadow = this.shadows;
+    if (liquid) object.renderOrder = 1;
+    object.position.set(coords[0] * CHUNK_SIZE, coords[1] * CHUNK_SIZE, coords[2] * CHUNK_SIZE);
+    object.matrixAutoUpdate = false;
+    object.updateMatrix();
+    this.scene.add(object);
+    into.set(key, object);
   }
 
   /** Keeps the sun's shadow box on the camera, snapped to its texels so shadows do not shimmer. */
@@ -768,11 +797,18 @@ export class VoxelRenderer {
     this.figures.delete(id);
   }
 
+  /** Every chunk with a mesh drawn, solid or liquid. */
+  private meshedKeys(): ChunkKey[] {
+    return [...new Set([...this.meshes.keys(), ...this.liquidMeshes.keys()])];
+  }
+
   private removeMesh(key: ChunkKey): void {
-    const mesh = this.meshes.get(key);
-    if (!mesh) return;
-    this.scene.remove(mesh);
-    mesh.geometry.dispose();
-    this.meshes.delete(key);
+    for (const into of [this.meshes, this.liquidMeshes]) {
+      const mesh = into.get(key);
+      if (!mesh) continue;
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      into.delete(key);
+    }
   }
 }

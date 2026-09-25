@@ -63,7 +63,11 @@ export function isSolidAt(
 const SKIN = 1e-4;
 const MAX_SUBSTEP = 0.45;
 
-/** Advances one entity by `dt` seconds: controller, gravity, then collision. */
+/**
+ * Advances one entity by `dt` seconds: controller, gravity, then collision.
+ * Returns how fast it was falling if it landed this step, in blocks per second,
+ * and 0 otherwise, so a game can judge a hard landing.
+ */
 export function stepEntity(
   store: ChunkStore,
   registry: BlockRegistry,
@@ -71,8 +75,8 @@ export function stepEntity(
   entity: Entity,
   dt: number,
   config: PhysicsConfig = DEFAULT_PHYSICS,
-): void {
-  if (entity.controller !== "walker") return;
+): number {
+  if (entity.controller !== "walker") return 0;
   const v = entity.velocity;
 
   const { forward, strafe, jump, sprint } = entity.input;
@@ -100,7 +104,9 @@ export function stepEntity(
   // Resolve y first so a player standing on the ground does not snag on the
   // edges of the blocks under them while walking.
   const hitY = moveAxis(store, registry, bounds, entity, 1, v[1] * dt);
+  let landing = 0;
   if (hitY) {
+    if (v[1] < 0 && !entity.onGround) landing = -v[1];
     entity.onGround = v[1] < 0;
     v[1] = 0;
   } else {
@@ -108,6 +114,7 @@ export function stepEntity(
   }
   if (moveHorizontal(store, registry, bounds, entity, 0, v[0] * dt, config.stepHeight)) v[0] = 0;
   if (moveHorizontal(store, registry, bounds, entity, 2, v[2] * dt, config.stepHeight)) v[2] = 0;
+  return landing;
 }
 
 /**

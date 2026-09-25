@@ -26,7 +26,15 @@ export interface MeshOptions {
   shade?: { top: number; bottom: number; x: number; z: number };
   /** Where each texture style sits in the renderer's atlas. Without it, no texture coordinates. */
   atlas?: AtlasLayout;
+  /**
+   * Which blocks to mesh: everything (the default), everything but liquids, or
+   * liquids alone, so a renderer can draw liquids in a see-through pass of their own.
+   */
+  liquids?: "include" | "skip" | "only";
 }
+
+/** How far a liquid's open surface sits below the top of its block. */
+export const LIQUID_SURFACE_DROP = 1 / 8;
 
 /**
  * Builds a face-culled mesh for the chunk at `coords`. A face is emitted only
@@ -70,6 +78,7 @@ export function meshChunk(
   const colors: number[] = [];
   const uvs: number[] = [];
   const atlas = options.atlas;
+  const liquids = options.liquids ?? "include";
   let faceCount = 0;
 
   for (let ly = 0; ly < CHUNK_SIZE; ly++) {
@@ -77,7 +86,11 @@ export function meshChunk(
       for (let lx = 0; lx < CHUNK_SIZE; lx++) {
         const id = blocks[voxelIndex(lx, ly, lz)]!;
         if (id === AIR) continue;
+        const liquid = registry.isLiquid(id);
+        if ((liquids === "skip" && liquid) || (liquids === "only" && !liquid)) continue;
         const def = registry.get(id);
+        // A liquid with open air or anything but itself above: its surface sits a little low.
+        const lowered = liquid && neighbour(lx, ly + 1, lz) !== id;
         for (const face of FACES) {
           const n = neighbour(lx + face.normal[0], ly + face.normal[1], lz + face.normal[2]);
           if (n === -1) continue;
@@ -90,7 +103,7 @@ export function meshChunk(
           const b = toColor((hex & 0xff) / 255) * k;
           const rect = atlas?.rects.get(def.textures[face.color]) ?? atlas?.rects.get("flat");
           for (const corner of face.corners) {
-            positions.push(lx + corner[0], ly + corner[1], lz + corner[2]);
+            positions.push(lx + corner[0], ly + corner[1] - (lowered && corner[1] === 1 ? LIQUID_SURFACE_DROP : 0), lz + corner[2]);
             normals.push(face.normal[0], face.normal[1], face.normal[2]);
             colors.push(r, g, b);
             if (rect) {

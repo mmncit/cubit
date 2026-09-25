@@ -19,6 +19,11 @@ export interface BlockDef {
   solid: boolean;
   /** Hides the faces of neighbouring blocks. */
   opaque: boolean;
+  /**
+   * Water and the like: drawn see-through in its own pass, its surface a little
+   * below the top of the block. A liquid is neither solid nor opaque unless it says so.
+   */
+  liquid: boolean;
   /** 0xRRGGBB in sRGB, per face direction. */
   colors: BlockColors;
   /** Surface pattern per face direction, multiplied into the colour. "flat" is none. */
@@ -29,6 +34,7 @@ export interface BlockInput {
   name: string;
   solid?: boolean;
   opaque?: boolean;
+  liquid?: boolean;
   /** One colour for every face. */
   color?: number;
   /** Per-face colours. Missing faces fall back to `color`, then to `side`. */
@@ -50,7 +56,7 @@ export const AIR_NAME = "air";
  */
 export class BlockRegistry {
   private readonly defs: BlockDef[] = [
-    { name: AIR_NAME, solid: false, opaque: false, colors: { top: 0, side: 0, bottom: 0 }, textures: { top: "flat", side: "flat", bottom: "flat" } },
+    { name: AIR_NAME, solid: false, opaque: false, liquid: false, colors: { top: 0, side: 0, bottom: 0 }, textures: { top: "flat", side: "flat", bottom: "flat" } },
   ];
   private readonly byName = new Map<string, number>([[AIR_NAME, AIR]]);
 
@@ -87,8 +93,9 @@ export class BlockRegistry {
     const id = this.defs.length;
     this.defs.push({
       name: input.name,
-      solid: input.solid ?? true,
-      opaque: input.opaque ?? true,
+      solid: input.solid ?? !input.liquid,
+      opaque: input.opaque ?? !input.liquid,
+      liquid: input.liquid ?? false,
       colors,
       textures,
     });
@@ -119,6 +126,10 @@ export class BlockRegistry {
 
   isSolid(id: number): boolean {
     return this.defs[id]?.solid ?? false;
+  }
+
+  isLiquid(id: number): boolean {
+    return this.defs[id]?.liquid ?? false;
   }
 
   isOpaque(id: number): boolean {

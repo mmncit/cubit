@@ -20,6 +20,12 @@ export interface SystemContext {
    * unknown, or a solid block would land inside an entity; try again next tick.
    */
   setBlock(position: Vec3, block: string): boolean;
+  /**
+   * The walkers that landed in the last tick's physics, by entity id, with how
+   * fast they were falling in blocks per second. Not part of the state: a game
+   * reads it to judge a hard landing, the tick after it happens.
+   */
+  landings: ReadonlyMap<string, number>;
 }
 
 /**
@@ -78,6 +84,7 @@ export class Simulation {
   readonly loadRadius: number;
   readonly loadBudget: number;
   readonly reach: number;
+  private landings: ReadonlyMap<string, number> = new Map();
   private readonly systems: GameSystem[];
   private readonly actions: Record<string, GameAction>;
   private _state: GameState;
@@ -135,6 +142,7 @@ export class Simulation {
     }
     const context = this.context(events);
     for (const system of this.systems) system(context);
+    const landings = new Map<string, number>();
     for (const entity of this._state.entities.values()) {
       // Hold an entity still while the chunk it stands in streams in.
       // Unloaded chunks collide as solid, so moving it now would shove it out.
@@ -142,8 +150,10 @@ export class Simulation {
       const cy = toChunk(Math.floor(y));
       const inWorld = cy >= this.bounds.minChunkY && cy <= this.bounds.maxChunkY;
       if (inWorld && !this._state.chunks.has(chunkKey(toChunk(Math.floor(x)), cy, toChunk(Math.floor(z))))) continue;
-      stepEntity(this._state, this.registry, this.bounds, entity, this.dt, this.physics);
+      const landing = stepEntity(this._state, this.registry, this.bounds, entity, this.dt, this.physics);
+      if (landing > 0) landings.set(entity.id, landing);
     }
+    this.landings = landings;
     this.streamChunks(events, this.loadBudget);
     this._state.tick++;
     return events;
@@ -246,6 +256,7 @@ export class Simulation {
       sim: this,
       dt: this.dt,
       tick: this._state.tick,
+      landings: this.landings,
       setBlock: (position, block) => {
         const [x, y, z] = position;
         if (![x, y, z].every(Number.isInteger)) return false;
