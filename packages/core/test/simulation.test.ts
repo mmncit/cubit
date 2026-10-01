@@ -164,6 +164,46 @@ describe("setBlock", () => {
     expect(place(sim, [12, 10, 0])).toContainEqual(expect.objectContaining({ reason: "Too far away." }));
   });
 
+  it("lets a game refuse a player's edit, with its own reason, and leaves the block as it was", () => {
+    const edits: unknown[] = [];
+    const sim = new Simulation({
+      registry: makeRegistry(), generator: flatGenerator(9), seed: 1, loadRadius: 1,
+      // Only stone, and only on the x = 2 column, as a game with a building plot might.
+      canEdit: (edit) => {
+        edits.push({ ...edit, actor: edit.actor.id });
+        return edit.position[0] === 2 && edit.to === "stone" ? null : "Only stone, and only here.";
+      },
+    });
+    withPlayer(sim);
+    sim.step();
+    expect(place(sim, [3, 10, 0])).toContainEqual(expect.objectContaining({ type: "rejected", reason: "Only stone, and only here." }));
+    expect(getBlock(sim.state, 3, 10, 0)).toBe(0);
+    expect(place(sim, [2, 10, 0])).not.toContainEqual(expect.objectContaining({ type: "rejected" }));
+    expect(getBlock(sim.state, 2, 10, 0)).toBe(sim.registry.id("stone"));
+    expect(edits[0]).toEqual({ actor: "p1", position: [3, 10, 0], from: "air", to: "stone" });
+    // The simulation's own checks come first: an edit out of reach never reaches the game.
+    const before = edits.length;
+    expect(place(sim, [12, 10, 0])).toContainEqual(expect.objectContaining({ reason: "Too far away." }));
+    expect(edits.length).toBe(before);
+  });
+
+  it("does not check blocks a game's own systems place", () => {
+    let asked = 0;
+    const sim = new Simulation({
+      registry: makeRegistry(), generator: flatGenerator(9), seed: 1, loadRadius: 1,
+      canEdit: () => {
+        asked++;
+        return "No.";
+      },
+      systems: [({ tick, setBlock }) => void (tick === 1 && setBlock([2, 10, 0], "stone"))],
+    });
+    withPlayer(sim);
+    sim.step();
+    sim.step();
+    expect(getBlock(sim.state, 2, 10, 0)).toBe(sim.registry.id("stone"));
+    expect(asked).toBe(0);
+  });
+
   it("rejects commands from an entity that does not exist", () => {
     const sim = setup();
     sim.enqueue("ghost", { type: "setBlock", position: [2, 10, 0], block: "stone" });

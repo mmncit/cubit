@@ -43,6 +43,18 @@ export interface ActionContext extends SystemContext {
 /** Handles an "act" command. Returns null to accept it, or a reason to reject it. */
 export type GameAction = (ctx: ActionContext) => string | null;
 
+/** A block a player's own `setBlock` command would change, after the simulation's own checks pass. */
+export interface BlockEdit {
+  actor: Entity;
+  position: Vec3;
+  /** Block names, before and after. */
+  from: string;
+  to: string;
+}
+
+/** A game's say over players' `setBlock` commands. Returns null to allow the edit, or a reason to refuse it. */
+export type EditCheck = (edit: BlockEdit, sim: Simulation) => string | null;
+
 export interface SimulationOptions {
   registry: BlockRegistry;
   generator: WorldGenerator;
@@ -60,6 +72,13 @@ export interface SimulationOptions {
   systems?: GameSystem[];
   /** Handlers for "act" commands, by action name. */
   actions?: Record<string, GameAction>;
+  /**
+   * Checks every block a player asks to change with a `setBlock` command, after
+   * the simulation's own checks. Without it every edit within reach is allowed.
+   * A game whose world changes only through its own actions can refuse them all.
+   * Systems and actions placing blocks through their context are not checked.
+   */
+  canEdit?: EditCheck;
 }
 
 /** What happened during a tick. Ids are registry-local; the host turns them into names. */
@@ -87,6 +106,7 @@ export class Simulation {
   private landings: ReadonlyMap<string, number> = new Map();
   private readonly systems: GameSystem[];
   private readonly actions: Record<string, GameAction>;
+  private readonly canEdit: EditCheck | undefined;
   private _state: GameState;
   private queue: IssuedCommand[] = [];
   private pending: SimEvent[] = [];
@@ -103,6 +123,7 @@ export class Simulation {
     this.reach = options.reach ?? 6;
     this.systems = options.systems ?? [];
     this.actions = options.actions ?? {};
+    this.canEdit = options.canEdit;
     this._state = { tick: 0, seed: options.seed >>> 0, chunks: new Map(), entities: new Map() };
   }
 
@@ -229,6 +250,10 @@ export class Simulation {
         const eye = eyePosition(entity);
         const distance = Math.hypot(p[0] + 0.5 - eye[0], p[1] + 0.5 - eye[1], p[2] + 0.5 - eye[2]);
         if (distance > this.reach + 1) return "Too far away.";
+        if (this.canEdit) {
+          const refused = this.canEdit({ actor: entity, position: [p[0], p[1], p[2]], from: this.registry.name(from), to: command.block }, this);
+          if (refused) return refused;
+        }
         if (to !== AIR && this.registry.isSolid(to)) {
           for (const other of this._state.entities.values()) {
             if (entityOverlapsBlock(other, p[0], p[1], p[2])) return "Something is in the way.";

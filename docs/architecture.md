@@ -34,7 +34,9 @@ renderer <── ClientWorld <── ServerMessage <── LocalHost <── Sim
    the `Simulation`. The client never gets to say who it is.
 4. At a fixed 60 ticks per second the simulation applies commands in order,
    validates each one (known block, integer position, loaded chunk, within reach,
-   not inside an entity), steps physics, streams chunks, and returns `SimEvent`s.
+   not inside an entity, and the game's own `canEdit` check if it gives one),
+   steps physics, streams chunks, and returns `SimEvent`s. A game whose world
+   changes only through its own actions refuses every raw `setBlock` there.
 5. The host turns events into `ServerMessage`s: chunk contents, block changes, and
    the entity list for the tick.
 6. `ClientWorld` rebuilds its own copy of the world from those messages alone.
