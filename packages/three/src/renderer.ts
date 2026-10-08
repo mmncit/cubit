@@ -152,6 +152,12 @@ export interface VoxelRendererOptions {
   shadows?: boolean;
   /** Edge of the shadow map in pixels. 2048 by default. */
   shadowMapSize?: number;
+  /**
+   * The box round the block the player is aiming at (`setHighlight`): its
+   * outline, and a faint wash over its faces. Light by default, so it reads on
+   * dark rock and dark earth as well as on stone.
+   */
+  highlight?: { outline?: number; fill?: number; fillOpacity?: number };
 }
 
 /** Where the sun is: `azimuth` from north towards east, `elevation` above the horizon, in radians. */
@@ -233,7 +239,7 @@ export class VoxelRenderer {
   private readonly liquidMaterial: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial;
   private readonly empty = new Set<ChunkKey>();
   private readonly dirty = new Set<ChunkKey>();
-  private readonly highlight: THREE.LineSegments;
+  private readonly highlight: THREE.Group;
   private readonly figureMaterial: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial;
   // Lighting, when asked for: a sun that follows the camera, and the sky's light.
   private readonly lit: boolean;
@@ -335,10 +341,22 @@ export class VoxelRenderer {
       this.setSun({ azimuth: -0.7, elevation: 0.95 });
     }
 
-    this.highlight = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)),
-      new THREE.LineBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.6 }),
+    // A bright outline with a softer one just outside it, since browsers draw lines a pixel wide whatever
+    // width is asked for, and a faint wash over the faces so the block itself looks lit.
+    const look = { outline: 0xfff3d6, fill: 0xfff8e8, fillOpacity: 0.18, ...options.highlight };
+    this.highlight = new THREE.Group();
+    for (const [scale, opacity] of [[1.006, 0.95], [1.03, 0.45]] as const) {
+      this.highlight.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(scale, scale, scale)),
+        new THREE.LineBasicMaterial({ color: look.outline, transparent: true, opacity }),
+      ));
+    }
+    const wash = new THREE.Mesh(
+      new THREE.BoxGeometry(1.01, 1.01, 1.01),
+      new THREE.MeshBasicMaterial({ color: look.fill, transparent: true, opacity: look.fillOpacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }),
     );
+    wash.renderOrder = 1;
+    this.highlight.add(wash);
     this.highlight.visible = false;
     this.scene.add(this.highlight);
 
@@ -672,8 +690,12 @@ export class VoxelRenderer {
     this.material.map?.dispose();
     this.material.dispose();
     this.liquidMaterial.dispose();
-    this.highlight.geometry.dispose();
-    (this.highlight.material as THREE.Material).dispose();
+    this.highlight.traverse((o) => {
+      const part = o as THREE.Mesh;
+      if (!part.geometry) return;
+      part.geometry.dispose();
+      (part.material as THREE.Material).dispose();
+    });
     this.renderer.dispose();
   }
 

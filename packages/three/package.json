@@ -1,6 +1,6 @@
 {
   "name": "@mmncit/cubit-three",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "three.js renderer for a @cubit/core client world.",
   "type": "module",
   "repository": {
