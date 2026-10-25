@@ -16,18 +16,18 @@ import { InputManager } from "@cubit/input";
 import { Minimap } from "@cubit/minimap";
 import { VoxelRenderer } from "@cubit/three";
 
-// A generic demo of the engine. Colours only, no textures: small to download,
-// and no borrowed art.
+// A generic demo of the engine. The textures are painted in code, so there is
+// nothing extra to download and no borrowed art.
 const registry = new BlockRegistry();
 const PALETTE = [
-  { name: "grass", colors: { top: 0x6fae4a, side: 0x8a6a45, bottom: 0x7b5b3a } },
-  { name: "dirt", color: 0x8a6a45 },
-  { name: "stone", color: 0x8d9197 },
-  { name: "sand", color: 0xdcc98c },
-  { name: "wood", colors: { top: 0xb58a55, side: 0x6e4b2a, bottom: 0xb58a55 } },
-  { name: "leaves", color: 0x3f8a3a, opaque: false },
-  { name: "planks", color: 0xc49a62 },
-  { name: "brick", color: 0xa4533b },
+  { name: "grass", colors: { top: 0x6fae4a, side: 0x8a6a45, bottom: 0x7b5b3a }, texture: { top: "grass", side: "soil", bottom: "soil" } },
+  { name: "dirt", color: 0x8a6a45, texture: "soil" },
+  { name: "stone", color: 0x8d9197, texture: "stone" },
+  { name: "sand", color: 0xdcc98c, texture: "sand" },
+  { name: "wood", colors: { top: 0xb58a55, side: 0x6e4b2a, bottom: 0xb58a55 }, texture: { top: "rings", side: "bark", bottom: "rings" } },
+  { name: "leaves", color: 0x3f8a3a, opaque: false, texture: "leaves" },
+  { name: "planks", color: 0xc49a62, texture: "planks" },
+  { name: "brick", color: 0xa4533b, texture: "ashlar" },
 ] as const;
 for (const block of PALETTE) registry.define(block);
 
@@ -61,7 +61,10 @@ const stats = document.querySelector<HTMLDivElement>("#stats")!;
 const hotbar = document.querySelector<HTMLDivElement>("#hotbar")!;
 document.body.classList.toggle("touch", touch);
 
-const renderer = new VoxelRenderer({ canvas, registry, renderDistance, maxPixelRatio: touch ? 1.5 : 2 });
+// Shadows are the costliest thing the renderer draws, so phones go without.
+const renderer = new VoxelRenderer({ canvas, registry, renderDistance, maxPixelRatio: touch ? 1.5 : 2, lighting: true, shadows: !touch });
+renderer.setSun({ azimuth: 2.2, elevation: 0.75 });
+renderer.setClouds({ height: 60, seed });
 // The sandbox world has no edge, so its map follows the player.
 const minimap = new Minimap({ registry, container: document.querySelector<HTMLDivElement>("#panel")!, radius: 40, size: touch ? 112 : 150 });
 const input = new InputManager(canvas, {
@@ -229,4 +232,12 @@ function frame(now: number) {
 requestAnimationFrame(frame);
 
 // Exposed for debugging in the console, not part of the engine's API.
-Object.assign(window, { cubit: { sim, host, client, renderer, input } });
+Object.assign(window, {
+  cubit: {
+    sim, host, client, renderer, input,
+    look: (y: number, p: number) => {
+      yaw = y;
+      pitch = p;
+    },
+  },
+});
