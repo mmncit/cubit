@@ -389,6 +389,8 @@ class TouchControls {
     const b = el("button", {
       width: size, height: size, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.7)",
       background: "rgba(0,0,0,0.3)", color: "white", font: "600 13px system-ui, sans-serif", touchAction: "none",
+      // A browser's default button padding would clip a label as long as "Remove" inside the circle.
+      padding: "0",
     });
     b.type = "button";
     b.textContent = label;
