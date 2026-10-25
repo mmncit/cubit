@@ -12,7 +12,8 @@ is arranged, what exists now, and what comes next.
 | `@cubit/core` | browser or server | `simplex-noise` only | blocks, chunks, entities, commands, physics, simulation, serialization, the host and the client replica, meshing |
 | `@cubit/three` | browser | core, three.js | a renderer that draws a client's world |
 | `@cubit/input` | browser | nothing | keyboard, mouse and touch, turned into abstract actions |
-| `examples/sandbox` | browser | all three | a small game that exercises the engine |
+| `@cubit/minimap` | browser | core | a top-down map of a client's world on a 2D canvas |
+| `examples/sandbox` | browser | all four | a small game that exercises the engine |
 
 `@cubit/core` never imports three.js and never touches a browser global. It is
 typechecked without the DOM library and its tests run in node. That is what lets
@@ -88,9 +89,20 @@ Snapshots carry a version number. A change to their shape bumps it, and
 ## Rendering
 
 Each chunk becomes one merged, face-culled mesh with per-face vertex colours and
-a fixed brightness per face direction. There are no textures and no lights. That
-keeps the download small (the whole sandbox is about 140 KB gzipped, most of it
-three.js) and the draw cheap on low-end phones, and it suits a low-poly look.
+a fixed brightness per face direction. Block textures are painted in code
+(`textures.ts`): each style is a 16-pixel grey pattern that multiplies the
+block's own colour, and the renderer packs the styles a registry uses into one
+small atlas. There are no image files, which keeps the download small (the
+whole sandbox is about 160 KB gzipped, most of it three.js).
+
+Lighting is optional. With `lighting` on, a sun and the sky light the world and
+`setSun` places the sun; with `shadows` as well, it casts soft shadows, the most
+expensive thing the renderer draws. `setClouds` lays blocky clouds over the
+world. A game turns these down on cheap phones; flat colour with no lights is
+the cheapest draw.
+
+Entities are drawn as small voxel models (`model.ts`), plain data a tool can
+author and a game can ship as JSON. Only a model's name travels in entity data.
 
 The mesher is a pure function in core that returns typed arrays, so it can move
 into a web worker without changes. The renderer remeshes at most a few chunks per
@@ -111,8 +123,7 @@ do not change; a game uses it to judge a hard landing.
 
 ## Touch first
 
-The Qarya concept that prompted this engine makes a roughly $100 Android phone the
-target device. The input package ships on-screen controls: drag on the left to
+The game that prompted this engine targets a roughly $100 Android phone. The input package ships on-screen controls: drag on the left to
 move, drag on the right to look, and three buttons. They are pointer events, so
 they work with a mouse too. Pixel ratio is capped and render distance is smaller
 on touch screens.
@@ -147,6 +158,6 @@ for that reason: clients never need to compute exactly what the server computes.
 
 ## Out of scope for now
 
-Greedy meshing, web workers, ambient occlusion, textures, transparency sorting,
-inventory, crafting, audio, and any game-specific content. The engine stays
+Greedy meshing, web workers, ambient occlusion, transparency sorting between
+liquid surfaces, inventory, crafting, audio, and any game-specific content. The engine stays
 content-neutral: a game brings its own blocks, generator and rules.

@@ -1,18 +1,19 @@
 # AGENTS.md: cubit
 
-Context for AI agents working in this repo. Keep it current. A stale line here
-gets acted on.
+Context for AI agents working in this repo. People should read
+[CONTRIBUTING.md](CONTRIBUTING.md), which says the same in fewer words. Keep
+this current: a stale line here gets acted on.
 
 ## What this is
 
 Cubit is a generic voxel game engine for the browser, written in TypeScript. Game
 state is plain, serializable data so that single-player games built on it can
 later gain a server and multiplayer. It is content-neutral: games bring their own
-blocks, world generator and rules. The first game planned on it is Qarya
-(`mmncit/qarya`), but nothing Qarya-specific belongs here.
+blocks, world generator and rules. The first game built on it is Qarya, but
+nothing specific to one game belongs here.
 
 - **Stack:** TypeScript, pnpm workspace, three.js, Vite, Vitest
-- **Repo:** `mmncit/cubit` (private)
+- **Repo:** `mmncit/cubit`, public, MIT licensed
 - **Design:** `docs/architecture.md`. Read it before changing core.
 
 ## Run it
@@ -74,7 +75,7 @@ reads.
 
 ## Packages and releases
 
-The four packages publish privately to GitHub Packages as `@mmncit/cubit-core`,
+The four packages publish to GitHub Packages as `@mmncit/cubit-core`,
 `@mmncit/cubit-three`, `@mmncit/cubit-input` and `@mmncit/cubit-minimap`. GitHub's
 registry requires the account name as the scope, which is why they are not
 `@cubit/*` there.
@@ -88,29 +89,26 @@ The packages ship TypeScript source, not built JavaScript. A game compiles them,
 so its tsconfig has to match `tsconfig.base.json` closely enough, and
 `@cubit/three` carries `@types/three` as a real dependency for that reason.
 
-To release, bump `version` in all four `packages/*/package.json` together, merge,
-then from `main`:
+Only the maintainer releases. To release, bump `version` in all four
+`packages/*/package.json` together, merge, then from `main` run
+`pnpm publish:packages` with `NPM_TOKEN` set to a GitHub token that has the
+`write:packages` scope. It runs the tests and the typecheck first. `.npmrc`
+reads `NPM_TOKEN` from the environment; without it pnpm warns that it could not
+replace the variable, and installing still works, since every dependency inside
+the workspace is local. Games pin a version, so a release changes nothing until
+a game upgrades.
 
-```bash
-NPM_TOKEN=$(command gh auth token --user mmncit) pnpm publish:packages
-```
-
-That runs the tests and the typecheck first. The token needs the
-`write:packages` scope. `.npmrc` reads `NPM_TOKEN` from the environment. Without
-it, pnpm warns that it could not replace the variable, and installing still works.
-Games pin a version, so a release changes nothing until a game upgrades.
+The README, the package READMEs and the screenshots in `docs/images` describe
+the public API. Change them in the same commit as the API they describe, and
+keep their code examples compiling.
 
 ## Git and GitHub
 
-The `mnc-conventions` skill from `mmncit/platform-context` covers git identity,
-pinning `GH_TOKEN` to the `mmncit` account, branching, PRs and commit trailers.
-Its brand palette and My Next Coffee copy linting do not apply here.
-
-- Local identity must be `mmncit <mmncit@gmail.com>`.
-- The remote is `git@github-personal:mmncit/cubit.git`.
-- Commit straight to `main` and push; no PR is needed. The owner decided this on
-  2026-09-23. Run `pnpm test` and `pnpm typecheck` before every push, since
-  nothing else checks the branch.
+- Contributors branch from `main` and open a pull request. Commit messages are
+  Conventional Commits with the package as the scope (`fix(three): ...`).
+- The maintainer may commit straight to `main` (decided 2026-09-23).
+- Run `pnpm test`, `pnpm typecheck` and `pnpm build` before every push.
+  `.github/workflows/ci.yml` runs the same three on pushes and pull requests.
 
 ## Known gaps
 

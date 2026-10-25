@@ -2,6 +2,16 @@
   "name": "@mmncit/cubit-three",
   "version": "0.10.0",
   "description": "three.js renderer for a @cubit/core client world.",
+  "keywords": [
+    "voxel",
+    "three.js",
+    "renderer",
+    "webgl"
+  ],
+  "license": "MIT",
+  "author": "Mamun Rashid",
+  "homepage": "https://github.com/mmncit/cubit/tree/main/packages/three#readme",
+  "bugs": "https://github.com/mmncit/cubit/issues",
   "type": "module",
   "repository": {
     "type": "git",
@@ -13,7 +23,9 @@
   },
   "types": "./src/index.ts",
   "files": [
-    "src"
+    "src",
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"

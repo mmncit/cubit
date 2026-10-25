@@ -2,6 +2,15 @@
   "name": "@mmncit/cubit-minimap",
   "version": "0.10.0",
   "description": "A top-down map of a client world, drawn on a 2D canvas, with the player's position and heading.",
+  "keywords": [
+    "voxel",
+    "minimap",
+    "canvas"
+  ],
+  "license": "MIT",
+  "author": "Mamun Rashid",
+  "homepage": "https://github.com/mmncit/cubit/tree/main/packages/minimap#readme",
+  "bugs": "https://github.com/mmncit/cubit/issues",
   "type": "module",
   "repository": {
     "type": "git",
@@ -13,7 +22,9 @@
   },
   "types": "./src/index.ts",
   "files": [
-    "src"
+    "src",
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"

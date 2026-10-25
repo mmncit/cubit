@@ -2,6 +2,17 @@
   "name": "@mmncit/cubit-core",
   "version": "0.10.0",
   "description": "Renderer-free voxel game state, simulation and serialization. Runs in a browser or on a server.",
+  "keywords": [
+    "voxel",
+    "game-engine",
+    "simulation",
+    "multiplayer",
+    "serialization"
+  ],
+  "license": "MIT",
+  "author": "Mamun Rashid",
+  "homepage": "https://github.com/mmncit/cubit/tree/main/packages/core#readme",
+  "bugs": "https://github.com/mmncit/cubit/issues",
   "type": "module",
   "repository": {
     "type": "git",
@@ -13,7 +24,9 @@
   },
   "types": "./src/index.ts",
   "files": [
-    "src"
+    "src",
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
