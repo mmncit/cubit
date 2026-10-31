@@ -6,7 +6,7 @@ game adds. Published to GitHub Packages as `@mmncit/cubit-minimap` and imported
 as `@cubit/minimap`:
 
 ```bash
-pnpm add @cubit/minimap@npm:@mmncit/cubit-minimap@^0.10.0
+pnpm add @cubit/minimap@npm:@mmncit/cubit-minimap@^0.11.0
 ```
 
 It either follows the player across an endless world or shows a fixed area,

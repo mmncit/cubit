@@ -12,7 +12,7 @@ Published to GitHub Packages as `@mmncit/cubit-core` and imported as
 `@cubit/core`:
 
 ```bash
-pnpm add @cubit/core@npm:@mmncit/cubit-core@^0.10.0
+pnpm add @cubit/core@npm:@mmncit/cubit-core@^0.11.0
 ```
 
 Installing from GitHub Packages needs a token; the

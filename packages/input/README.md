@@ -6,7 +6,7 @@ secondary action, and picking a slot. Published to GitHub Packages as
 `@mmncit/cubit-input` and imported as `@cubit/input`:
 
 ```bash
-pnpm add @cubit/input@npm:@mmncit/cubit-input@^0.10.0
+pnpm add @cubit/input@npm:@mmncit/cubit-input@^0.11.0
 ```
 
 On a computer it captures the mouse with pointer lock. Where a browser refuses

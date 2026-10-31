@@ -5,14 +5,15 @@ client world. Published to GitHub Packages as `@mmncit/cubit-three` and imported
 as `@cubit/three`:
 
 ```bash
-pnpm add @cubit/three@npm:@mmncit/cubit-three@^0.10.0
+pnpm add @cubit/three@npm:@mmncit/cubit-three@^0.11.0
 ```
 
 Each chunk becomes one face-culled mesh, rebuilt a few chunks per frame, nearest
 first. Block textures are painted in code from the styles in `@cubit/core`, so
 there are no image files to download. It can light the world with a sun and
-soft shadows, draw blocky clouds, show liquids see-through, draw entities as
-voxel models, and highlight the block the player is aiming at.
+soft shadows, with ambient occlusion in the creases and a bump map made from
+the same textures, draw blocky clouds, show liquids see-through, draw entities
+as voxel models, and highlight the block the player is aiming at.
 
 ```ts
 import { VoxelRenderer } from "@cubit/three";
@@ -30,7 +31,9 @@ renderer.render(client);
 ```
 
 Shadows are the costliest option; leave them off on cheap phones, and cap
-`maxPixelRatio` at about 1.5 there. The renderer only ever reads the client's
+`maxPixelRatio` at about 1.5 there. Ambient occlusion is baked into the chunk
+meshes and costs almost nothing to draw; `ambientOcclusion: false` and
+`bump: 0` turn the two off. The renderer only ever reads the client's
 copy of the world, never the simulation's.
 
 `three` and `@types/three` are dependencies, because the package ships

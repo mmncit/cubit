@@ -7,6 +7,7 @@ import {
   defineMapBlocks,
   meshChunk,
   paintAtlas,
+  paintNormalAtlas,
   paintTexture,
   TEXTURE_STYLES,
   TILE_SIZE,
@@ -131,5 +132,29 @@ describe("meshChunk with an atlas", () => {
     const mesh = meshChunk(store, registry, [0, 0, 0]);
     expect(mesh.uvs.every((n) => n === 0)).toBe(true);
     expect(mesh.faceCount).toBe(6);
+  });
+});
+
+describe("the normal atlas, for bump mapping", () => {
+  const layout = atlasLayout(["flat", "ashlar", "sand"]);
+  const normals = paintNormalAtlas(layout);
+  const at = (style: "flat" | "ashlar" | "sand", x: number, y: number) => {
+    const [u0, v0] = layout.rects.get(style)!;
+    const i = ((Math.round(v0 * layout.height) + y) * layout.width + Math.round(u0 * layout.width) + x) * 4;
+    return [normals[i]!, normals[i + 1]!, normals[i + 2]!];
+  };
+
+  it("is the same size as the colour atlas", () => {
+    expect(normals.length).toBe(paintAtlas(layout).length);
+  });
+
+  it("faces straight out where a style is flat, and tilts where it has grain or joints", () => {
+    for (let x = 0; x < 16; x += 5) expect(at("flat", x, x)).toEqual([128, 128, 255]);
+    const tilted = Array.from({ length: 16 * 16 }, (_, i) => at("ashlar", i % 16, Math.floor(i / 16))).filter(([r, g]) => r !== 128 || g !== 128);
+    expect(tilted.length).toBeGreaterThan(16);
+  });
+
+  it("points outward everywhere: every normal has its z towards the viewer", () => {
+    for (let i = 0; i < 16 * 16; i++) expect(at("sand", i % 16, Math.floor(i / 16))[2]!).toBeGreaterThan(128);
   });
 });

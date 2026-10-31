@@ -7,6 +7,7 @@ import {
   glowCentre,
   meshModel,
   paintAtlas,
+  paintNormalAtlas,
   parseChunkKey,
   toChunk,
   type BlockRegistry,
@@ -153,6 +154,18 @@ export interface VoxelRendererOptions {
   /** Edge of the shadow map in pixels. 2048 by default. */
   shadowMapSize?: number;
   /**
+   * Shade the corners where blocks crowd together: creases, the foot of a wall,
+   * the inside of a hole. Cheap, since it is baked into the chunk meshes. On by
+   * default with lighting.
+   */
+  ambientOcclusion?: boolean;
+  /**
+   * How strongly the texture styles' grain catches the light, as a bump map
+   * made from the same patterns. Needs lighting and textures; 1 by default,
+   * 0 for none.
+   */
+  bump?: number;
+  /**
    * The box round the block the player is aiming at (`setHighlight`): its
    * outline, and a faint wash over its faces. Light by default, so it reads on
    * dark rock and dark earth as well as on stone.
@@ -164,7 +177,7 @@ export interface VoxelRendererOptions {
 export interface SunOptions {
   azimuth: number;
   elevation: number;
-  /** 0xRRGGBB. White by default; warmer towards dusk. */
+  /** 0xRRGGBB. A warm white by default; warmer still towards dusk. */
   color?: number;
 }
 
@@ -244,6 +257,7 @@ export class VoxelRenderer {
   // Lighting, when asked for: a sun that follows the camera, and the sky's light.
   private readonly lit: boolean;
   private readonly shadows: boolean;
+  private readonly ao: boolean;
   private readonly sun: THREE.DirectionalLight | null = null;
   private readonly skyLight: THREE.HemisphereLight | null = null;
   private readonly sunDirection = new THREE.Vector3(0, 1, 0);
@@ -278,6 +292,7 @@ export class VoxelRenderer {
     this.registry = options.registry;
     this.lit = options.lighting ?? false;
     this.shadows = this.lit && (options.shadows ?? false);
+    this.ao = options.ambientOcclusion ?? this.lit;
     const Material = this.lit ? THREE.MeshLambertMaterial : THREE.MeshBasicMaterial;
     this.material = new Material({ vertexColors: true });
     this.figureMaterial = new Material({ vertexColors: true });
@@ -292,6 +307,19 @@ export class VoxelRenderer {
       texture.colorSpace = THREE.NoColorSpace; // grey levels are multipliers, not colours
       texture.needsUpdate = true;
       this.material.map = texture;
+      const bump = options.bump ?? 1;
+      if (this.lit && bump > 0) {
+        // The same patterns as heights, so sand looks grainy and a wall's joints sit back, in the light that falls on them.
+        const normals = new THREE.DataTexture(paintNormalAtlas(this.atlas), this.atlas.width, this.atlas.height, THREE.RGBAFormat);
+        normals.magFilter = THREE.NearestFilter;
+        normals.minFilter = THREE.LinearMipmapLinearFilter;
+        normals.generateMipmaps = true;
+        normals.colorSpace = THREE.NoColorSpace;
+        normals.needsUpdate = true;
+        const material = this.material as THREE.MeshLambertMaterial;
+        material.normalMap = normals;
+        material.normalScale.set(bump, bump);
+      }
     }
     // See-through, seen from above and below, and never hiding what lies behind it in the depth buffer.
     this.liquidMaterial = new Material({ vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false, side: THREE.DoubleSide });
@@ -318,9 +346,13 @@ export class VoxelRenderer {
     this.cloudScene.fog = new THREE.Fog(sky, 140, 380);
 
     if (this.lit) {
-      // Sky light from above and a warm bounce from the ground, so shaded sides stay readable.
-      this.skyLight = new THREE.HemisphereLight(0xeef3ff, 0xc2ad8e, 1);
-      this.sun = new THREE.DirectionalLight(0xffffff, 0.85);
+      // A strong, warm sun over a cooler, weaker sky light and a warm bounce from the ground: faces towards
+      // the sun glow and faces away stay readable but clearly in shade. Tone mapping keeps the sunlit faces
+      // from burning out, and it keeps hues as they are, so a game's palette still reads.
+      this.renderer.toneMapping = THREE.NeutralToneMapping;
+      this.renderer.toneMappingExposure = 1.05;
+      this.skyLight = new THREE.HemisphereLight(0xd8e6ff, 0xb39470, 0.8);
+      this.sun = new THREE.DirectionalLight(0xfff1dc, 1.4);
       this.scene.add(this.skyLight, this.sun, this.sun.target);
       if (this.shadows) {
         this.renderer.shadowMap.enabled = true;
@@ -534,8 +566,8 @@ export class VoxelRenderer {
       this.brightness = b;
       if (this.lit) {
         // The lights dim, not the colours, so shade and shadow keep their shape.
-        this.skyLight!.intensity = 0.35 + 0.7 * b;
-        this.sun!.intensity = 0.75 * b;
+        this.skyLight!.intensity = 0.3 + 0.55 * b;
+        this.sun!.intensity = 1.35 * b;
       } else {
         this.material.color.setRGB(b, b, b);
         this.figureMaterial.color.setRGB(b, b, b);
@@ -554,7 +586,7 @@ export class VoxelRenderer {
     if (!this.sun) return;
     const { azimuth, elevation } = options;
     this.sunDirection.set(Math.sin(azimuth) * Math.cos(elevation), Math.sin(elevation), -Math.cos(azimuth) * Math.cos(elevation)).normalize();
-    this.sun.color.setHex(options.color ?? 0xffffff);
+    this.sun.color.setHex(options.color ?? 0xfff1dc);
   }
 
   /** Lays a layer of blocky clouds over the world, or clears it with null. */
@@ -747,7 +779,7 @@ export class VoxelRenderer {
         continue;
       }
       budget--;
-      const base = { linearColors: true, atlas: this.atlas, ...(this.lit ? { shade: LIT_SHADE } : {}) };
+      const base = { linearColors: true, atlas: this.atlas, ao: this.ao, ...(this.lit ? { shade: LIT_SHADE } : {}) };
       const solid = meshChunk(store, this.registry, coords, { ...base, liquids: "skip" });
       const liquid = meshChunk(store, this.registry, coords, { ...base, liquids: "only" });
       if (solid.faceCount === 0 && liquid.faceCount === 0) {

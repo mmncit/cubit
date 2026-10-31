@@ -205,25 +205,55 @@ export function atlasLayout(styles: Iterable<TextureStyle>): AtlasLayout {
   return { width, height, rects };
 }
 
+/** Each tile of an atlas painted pixel by pixel, the padding round it wrapped from the tile, as RGBA rows from the top. */
+function fillAtlas(layout: AtlasLayout, tileOf: (style: TextureStyle) => (x: number, y: number) => [number, number, number]): Uint8Array {
+  const { width, height } = layout;
+  const pixels = new Uint8Array(width * height * 4).fill(255);
+  for (const [style, [u0, v0]] of layout.rects) {
+    const pixel = tileOf(style);
+    const cx = Math.round(u0 * width) - PAD;
+    const cy = Math.round(v0 * height) - PAD;
+    for (let y = 0; y < CELL_SIZE; y++) {
+      for (let x = 0; x < CELL_SIZE; x++) {
+        const i = ((cy + y) * width + (cx + x)) * 4;
+        [pixels[i], pixels[i + 1], pixels[i + 2]] = pixel(wrap(x - PAD, TILE_SIZE), wrap(y - PAD, TILE_SIZE));
+      }
+    }
+  }
+  return pixels;
+}
+
+/**
+ * The same atlas as a tangent-space normal map, for bump mapping: each style's
+ * grey levels read as heights, lighter higher, so the grain in sand and the
+ * joints in a wall catch the light. Wraps like the patterns, so it tiles too.
+ * Flat tiles face straight out (128, 128, 255). `strength` steepens the slopes.
+ */
+export function paintNormalAtlas(layout: AtlasLayout, strength = 3): Uint8Array {
+  return fillAtlas(layout, (style) => {
+    const tile = paintTexture(style);
+    const h = (x: number, y: number) => tile[wrap(y, TILE_SIZE) * TILE_SIZE + wrap(x, TILE_SIZE)]! / 255;
+    return (x, y) => {
+      const dx = (h(x + 1, y) - h(x - 1, y)) * strength;
+      const dy = (h(x, y + 1) - h(x, y - 1)) * strength;
+      const len = Math.hypot(dx, dy, 1);
+      const byte = (n: number) => Math.round((n / len) * 127.5 + 127.5);
+      return [byte(-dx), byte(-dy), byte(1)];
+    };
+  });
+}
+
 /**
  * Paints an atlas as RGBA pixels, row by row from the top. Each tile is
  * surrounded by its own pattern wrapped round, so filtering and mipmaps blend a
  * tile only with itself.
  */
 export function paintAtlas(layout: AtlasLayout): Uint8Array {
-  const { width, height } = layout;
-  const pixels = new Uint8Array(width * height * 4).fill(255);
-  for (const [style, [u0, v0]] of layout.rects) {
+  return fillAtlas(layout, (style) => {
     const tile = paintTexture(style);
-    const cx = Math.round(u0 * width) - PAD;
-    const cy = Math.round(v0 * height) - PAD;
-    for (let y = 0; y < CELL_SIZE; y++) {
-      for (let x = 0; x < CELL_SIZE; x++) {
-        const v = tile[wrap(y - PAD, TILE_SIZE) * TILE_SIZE + wrap(x - PAD, TILE_SIZE)]!;
-        const i = ((cy + y) * width + (cx + x)) * 4;
-        pixels[i] = pixels[i + 1] = pixels[i + 2] = v;
-      }
-    }
-  }
-  return pixels;
+    return (x, y) => {
+      const v = tile[y * TILE_SIZE + x]!;
+      return [v, v, v];
+    };
+  });
 }

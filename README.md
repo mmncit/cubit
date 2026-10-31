@@ -29,7 +29,8 @@ The screenshots are from the sandbox in `examples/sandbox`, at its default seed.
 - Game rules as plain functions: systems that run every tick, named actions a
   player can take, and a check that can refuse a player's block edits.
 - A three.js renderer with face-culled chunk meshes, textures painted in code
-  (no image files), optional sun lighting with soft shadows, blocky clouds,
+  (no image files), optional sun lighting with soft shadows, ambient occlusion
+  in the creases, bump mapping made from the same textures, blocky clouds,
   see-through liquids, voxel models for entities, and a highlight on the aimed
   block.
 - Keyboard, mouse and touch input. Phones get on-screen controls, and browsers
@@ -95,9 +96,9 @@ Then install them under their `@cubit/*` names, which is how the code imports
 them:
 
 ```bash
-NPM_TOKEN=<your token> pnpm add @cubit/core@npm:@mmncit/cubit-core@^0.10.0 \
-  @cubit/three@npm:@mmncit/cubit-three@^0.10.0 \
-  @cubit/input@npm:@mmncit/cubit-input@^0.10.0
+NPM_TOKEN=<your token> pnpm add @cubit/core@npm:@mmncit/cubit-core@^0.11.0 \
+  @cubit/three@npm:@mmncit/cubit-three@^0.11.0 \
+  @cubit/input@npm:@mmncit/cubit-input@^0.11.0
 ```
 
 The packages ship TypeScript source rather than built JavaScript, and your

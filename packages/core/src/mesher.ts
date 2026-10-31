@@ -31,7 +31,18 @@ export interface MeshOptions {
    * liquids alone, so a renderer can draw liquids in a see-through pass of their own.
    */
   liquids?: "include" | "skip" | "only";
+  /**
+   * Ambient occlusion: darkens each corner of a face by how many solid blocks
+   * crowd it, so creases, the foot of a wall and the inside of a hole read as
+   * shaded. Off by default, which keeps colours exactly as the registry gives them.
+   */
+  ao?: boolean;
 }
+
+/** Brightness at a corner with 0, 1, 2 or 3 solid blocks round it. */
+export const AO_LEVELS = [1, 0.76, 0.6, 0.45] as const;
+
+const FULL_LIGHT = [1, 1, 1, 1];
 
 /** How far a liquid's open surface sits below the top of its block. */
 export const LIQUID_SURFACE_DROP = 1 / 8;
@@ -73,6 +84,31 @@ export function meshChunk(
     return getBlock(store, originX + lx, originY + ly, originZ + lz) ?? -1;
   };
 
+  const solid = (x: number, y: number, z: number) => {
+    const n = neighbour(x, y, z);
+    return n !== -1 && n !== AIR && registry.isOpaque(n);
+  };
+  /** Each corner's brightness: the blocks beside it and diagonally across it in the layer the face looks into. */
+  const cornerLight = (normal: Vec3, corners: readonly Vec3[], lx: number, ly: number, lz: number): number[] => {
+    const axis = normal[0] !== 0 ? 0 : normal[1] !== 0 ? 1 : 2;
+    const [a, b] = ([0, 1, 2] as const).filter((i) => i !== axis) as [0 | 1 | 2, 0 | 1 | 2];
+    const base: Vec3 = [lx + normal[0], ly + normal[1], lz + normal[2]];
+    return corners.map((corner) => {
+      const at = (da: number, db: number) => {
+        const p: Vec3 = [...base];
+        p[a] += da;
+        p[b] += db;
+        return solid(p[0], p[1], p[2]);
+      };
+      const da = corner[a] === 1 ? 1 : -1;
+      const db = corner[b] === 1 ? 1 : -1;
+      const side1 = at(da, 0);
+      const side2 = at(0, db);
+      const occluded = side1 && side2 ? 3 : Number(side1) + Number(side2) + Number(at(da, db));
+      return AO_LEVELS[occluded]!;
+    });
+  };
+
   const positions: number[] = [];
   const normals: number[] = [];
   const colors: number[] = [];
@@ -102,10 +138,15 @@ export function meshChunk(
           const g = toColor(((hex >> 8) & 0xff) / 255) * k;
           const b = toColor((hex & 0xff) / 255) * k;
           const rect = atlas?.rects.get(def.textures[face.color]) ?? atlas?.rects.get("flat");
-          for (const corner of face.corners) {
+          const light = options.ao && !liquid ? cornerLight(face.normal, face.corners, lx, ly, lz) : FULL_LIGHT;
+          // Split the quad along the diagonal whose ends are more alike, or the shading shows a crease.
+          const turn = light[0]! + light[2]! < light[1]! + light[3]! ? 1 : 0;
+          for (let c = 0; c < 4; c++) {
+            const corner = face.corners[(c + turn) % 4]!;
+            const l = light[(c + turn) % 4]!;
             positions.push(lx + corner[0], ly + corner[1] - (lowered && corner[1] === 1 ? LIQUID_SURFACE_DROP : 0), lz + corner[2]);
             normals.push(face.normal[0], face.normal[1], face.normal[2]);
-            colors.push(r, g, b);
+            colors.push(r * l, g * l, b * l);
             if (rect) {
               const [u, v] = faceUv(face.normal, corner);
               uvs.push(rect[0] + (rect[2] - rect[0]) * u, rect[1] + (rect[3] - rect[1]) * v);

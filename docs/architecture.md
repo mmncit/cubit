@@ -95,11 +95,17 @@ block's own colour, and the renderer packs the styles a registry uses into one
 small atlas. There are no image files, which keeps the download small (the
 whole sandbox is about 160 KB gzipped, most of it three.js).
 
-Lighting is optional. With `lighting` on, a sun and the sky light the world and
-`setSun` places the sun; with `shadows` as well, it casts soft shadows, the most
-expensive thing the renderer draws. `setClouds` lays blocky clouds over the
-world. A game turns these down on cheap phones; flat colour with no lights is
-the cheapest draw.
+Lighting is optional. With `lighting` on, a strong warm sun and a cooler sky
+light the world, tone-mapped so sunlit faces do not burn out and hues stay as
+the game gave them, and `setSun` places the sun; with `shadows` as well, it
+casts soft shadows, the most expensive thing the renderer draws. Lighting also
+brings two things that cost almost nothing at draw time. Ambient occlusion is
+baked into the chunk meshes by the mesher (`ao`): each corner of a face darkens
+with the solid blocks crowding it, and the quad is split along the diagonal
+that hides the seam. Bump mapping uses a normal map painted from the same
+texture styles (`paintNormalAtlas`), each style's grey levels read as heights.
+`setClouds` lays blocky clouds over the world. A game turns these down on cheap
+phones; flat colour with no lights is the cheapest draw.
 
 Entities are drawn as small voxel models (`model.ts`), plain data a tool can
 author and a game can ship as JSON. Only a model's name travels in entity data.
@@ -158,6 +164,6 @@ for that reason: clients never need to compute exactly what the server computes.
 
 ## Out of scope for now
 
-Greedy meshing, web workers, ambient occlusion, transparency sorting between
+Greedy meshing, web workers, transparency sorting between
 liquid surfaces, inventory, crafting, audio, and any game-specific content. The engine stays
 content-neutral: a game brings its own blocks, generator and rules.
