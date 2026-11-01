@@ -5,6 +5,7 @@ import { decodeChunk, decodeChunkBase64, encodeChunkBase64, type DecodeOptions }
 import type { Entity } from "./entity";
 import { cloneJson } from "./json";
 import type { Vec3 } from "./math";
+import { err, getOrThrow, ok, type Result } from "./result";
 
 export const SNAPSHOT_FORMAT = "cubit/snapshot";
 /** Bump when the snapshot shape changes, and teach restoreSnapshot the old one. */
@@ -60,17 +61,25 @@ export function createSnapshot(state: GameState, registry: BlockRegistry, option
   };
 }
 
-export function assertSnapshot(value: unknown): asserts value is Snapshot {
+/**
+ * Reads a value as a snapshot, or says in words why it is not one: for a save
+ * from storage or the network, where a bad one is expected rather than a bug.
+ */
+export function parseSnapshot(value: unknown): Result<string, Snapshot> {
   const s = value as Partial<Snapshot> | null;
-  if (!s || typeof s !== "object" || s.format !== SNAPSHOT_FORMAT) {
-    throw new Error("This is not a cubit snapshot.");
-  }
+  if (!s || typeof s !== "object" || s.format !== SNAPSHOT_FORMAT) return err("This is not a cubit snapshot.");
   if (s.version !== SNAPSHOT_VERSION) {
-    throw new Error(`Snapshot version ${String(s.version)} is not supported. This build reads version ${SNAPSHOT_VERSION}.`);
+    return err(`Snapshot version ${String(s.version)} is not supported. This build reads version ${SNAPSHOT_VERSION}.`);
   }
   if (!Array.isArray(s.chunks) || !Array.isArray(s.entities) || typeof s.tick !== "number" || typeof s.seed !== "number") {
-    throw new Error("Snapshot is missing required fields.");
+    return err("Snapshot is missing required fields.");
   }
+  return ok(s as Snapshot);
+}
+
+/** `parseSnapshot`, throwing its reason as an Error. */
+export function assertSnapshot(value: unknown): asserts value is Snapshot {
+  getOrThrow<string>((reason) => new Error(reason))(parseSnapshot(value));
 }
 
 /** Rebuilds game state from a snapshot. Restored chunks are marked modified. */

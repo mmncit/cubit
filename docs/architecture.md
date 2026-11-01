@@ -63,6 +63,22 @@ Block ids are small numbers local to one registry in one process. They depend on
 the order a game defines its blocks, so **they never leave the process**. Saves
 and messages name blocks instead.
 
+## Functions over plain data
+
+Core keeps its logic in pure functions on that plain data, and exports the few
+building blocks it uses so games can do the same: `pipe` and `flow` to compose
+stages, `Monoid` (sum, min, max, boolean, string, array, function chains,
+records field by field, intervals and 3D boxes, with `concatAll` and
+`foldMap`) and `Result` (a value or the reason there is none). They are
+namespaced in the package, `Monoid.sum` and `Result.ok`, so their short names
+stay out of the way. The simulation's command checks are pure functions
+returning a `Result`, with one place that writes a block and reports it, so a
+player's edit and a game system's edit cannot drift apart. The hot paths
+(physics, the mesher, the chunk codec, raycasts, the top-down map) stay as
+loops over typed arrays, calling pure functions per element; and the objects
+with a lifecycle (the simulation, host, client, renderer, input and minimap)
+stay objects, with pure logic underneath.
+
 ## Serialization
 
 `JSON.stringify` on a typed array produces an object keyed `"0"`, `"1"`, and so

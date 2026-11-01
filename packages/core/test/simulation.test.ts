@@ -204,6 +204,50 @@ describe("setBlock", () => {
     expect(asked).toBe(0);
   });
 
+  it("says exactly why a position is refused, and accepts a block that is already there without checking reach", () => {
+    const sim = setup();
+    expect(place(sim, [2.5, 10, 0])).toContainEqual(expect.objectContaining({ reason: "Block position must be three integers." }));
+    expect(place(sim, [2, 10, 9000])).toContainEqual(expect.objectContaining({ reason: "That part of the world is not loaded." }));
+    // Far out of reach, but already air: nothing to change, so nothing refused and nothing reported.
+    const same = place(sim, [12, 10, 0], "air");
+    expect(same.filter((e) => e.type === "rejected" || e.type === "blockChanged")).toEqual([]);
+  });
+
+  it("gives systems a setBlock that answers true or false the same way", () => {
+    const answers: boolean[] = [];
+    const sim = new Simulation({
+      registry: makeRegistry(), generator: flatGenerator(9), seed: 1, loadRadius: 1,
+      systems: [({ tick, setBlock }) => {
+        if (tick !== 1) return;
+        answers.push(
+          setBlock([2.5, 10, 0], "stone"),
+          setBlock([2, 10, 0], "lava"),
+          setBlock([2, 10, 9000], "stone"),
+          setBlock([2, 10, 0], "air"),
+          setBlock([0, 10, 0], "stone"),
+          setBlock([12, 10, 0], "stone"),
+        );
+      }],
+    });
+    withPlayer(sim);
+    sim.step();
+    const events = sim.step();
+    // Fractional, unknown, unloaded: false. Already so: true. Inside the player: false. Out of a player's reach: true, systems have none.
+    expect(answers).toEqual([false, false, false, true, false, true]);
+    expect(events.filter((e) => e.type === "blockChanged")).toEqual([{ type: "blockChanged", position: [12, 10, 0], from: 0, to: sim.registry.id("stone") }]);
+  });
+
+  it("clamps input, and refuses input that is not a finite number", () => {
+    const sim = setup();
+    const player = sim.state.entities.get("p1")!;
+    sim.enqueue("p1", { type: "input", forward: 3, strafe: -3, jump: true, sprint: true, yaw: 1, pitch: 9 });
+    sim.step();
+    expect(player.input).toEqual({ forward: 1, strafe: -1, jump: true, sprint: true });
+    expect([player.yaw, player.pitch]).toEqual([1, Math.PI / 2]);
+    sim.enqueue("p1", { type: "input", forward: Number.NaN, strafe: 0, jump: false, yaw: 0, pitch: 0 });
+    expect(sim.step()).toContainEqual(expect.objectContaining({ type: "rejected", reason: "Input values must be finite numbers." }));
+  });
+
   it("rejects commands from an entity that does not exist", () => {
     const sim = setup();
     sim.enqueue("ghost", { type: "setBlock", position: [2, 10, 0], block: "stone" });

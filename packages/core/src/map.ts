@@ -2,6 +2,7 @@ import { AIR, type BlockInput, type BlockRegistry } from "./blocks";
 import { ByteReader, ByteWriter, fromBase64, toBase64 } from "./bytes";
 import { CHUNK_SIZE, createChunk, toChunk, voxelIndex } from "./chunk";
 import type { WorldGenerator } from "./generator";
+import { interval } from "./monoid";
 import type { Vec3 } from "./math";
 
 export const MAP_FORMAT = "cubit/map";
@@ -135,9 +136,9 @@ export function createMapGenerator(map: VoxelMap, options: MapGeneratorOptions =
 
   const mapMin = toChunk(oy);
   const mapMax = toChunk(oy + sy - 1);
-  const verticalRange: [number, number] = outside
-    ? [Math.min(mapMin, outside.verticalRange[0]), Math.max(mapMax, outside.verticalRange[1])]
-    : [mapMin, mapMax];
+  // The chunk rows the map fills, widened to hold the generator's outside it.
+  const [low, high] = outside ? interval.concat([mapMin, mapMax], outside.verticalRange) : [mapMin, mapMax];
+  const verticalRange: [number, number] = [low, high];
 
   const idsFor = (registry: BlockRegistry): number[] => {
     let ids = idsByRegistry.get(registry);

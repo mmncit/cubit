@@ -1,10 +1,12 @@
 import { AIR, type BlockRegistry } from "./blocks";
 import { CHUNK_SIZE, chunkKey, toChunk, type ChunkKey } from "./chunk";
 import type { Command, IssuedCommand } from "./commands";
-import { createEntity, entityOverlapsBlock, eyePosition, type Entity, type EntityInit } from "./entity";
+import { createEntity, entityOverlapsBlock, eyePosition, type Entity, type EntityInit, type EntityInput } from "./entity";
 import type { WorldGenerator } from "./generator";
 import { clamp, type Vec3 } from "./math";
 import { DEFAULT_PHYSICS, stepEntity, type PhysicsConfig, type WorldBounds } from "./physics";
+import { err, flatMap, ok, type Result } from "./result";
+import { pipe } from "./function";
 import { createSnapshot, restoreSnapshot, type GameState, type Snapshot, type SnapshotOptions } from "./snapshot";
 import type { JsonValue } from "./json";
 import { getBlock, writeBlock } from "./world";
@@ -227,40 +229,27 @@ export class Simulation {
 
     switch (command.type) {
       case "input": {
-        const { forward, strafe, yaw, pitch } = command;
-        if (![forward, strafe, yaw, pitch].every(Number.isFinite)) return "Input values must be finite numbers.";
-        entity.input = {
-          forward: clamp(forward, -1, 1),
-          strafe: clamp(strafe, -1, 1),
-          jump: command.jump === true,
-          sprint: command.sprint === true,
-        };
-        entity.yaw = yaw;
-        entity.pitch = clamp(pitch, -Math.PI / 2, Math.PI / 2);
+        const parsed = parseInput(command);
+        if (!parsed.ok) return parsed.error;
+        entity.input = parsed.value.input;
+        entity.yaw = parsed.value.yaw;
+        entity.pitch = parsed.value.pitch;
         return null;
       }
       case "setBlock": {
-        const p = command.position;
-        if (!Array.isArray(p) || p.length !== 3 || !p.every(Number.isInteger)) return "Block position must be three integers.";
-        const to = this.registry.tryId(command.block);
-        if (to === undefined) return `Unknown block "${command.block}".`;
-        const from = getBlock(this._state, p[0], p[1], p[2]);
-        if (from === undefined) return "That part of the world is not loaded.";
-        if (from === to) return null;
-        const eye = eyePosition(entity);
-        const distance = Math.hypot(p[0] + 0.5 - eye[0], p[1] + 0.5 - eye[1], p[2] + 0.5 - eye[2]);
-        if (distance > this.reach + 1) return "Too far away.";
-        if (this.canEdit) {
-          const refused = this.canEdit({ actor: entity, position: [p[0], p[1], p[2]], from: this.registry.name(from), to: command.block }, this);
-          if (refused) return refused;
-        }
-        if (to !== AIR && this.registry.isSolid(to)) {
-          for (const other of this._state.entities.values()) {
-            if (entityOverlapsBlock(other, p[0], p[1], p[2])) return "Something is in the way.";
-          }
-        }
-        writeBlock(this._state, p[0], p[1], p[2], to);
-        events.push({ type: "blockChanged", position: [p[0], p[1], p[2]], from, to });
+        // A player's edit: the world's checks, then reach and the game's say, then room for the block.
+        const planned = pipe(
+          planEdit(this._state, this.registry, command.position, command.block),
+          flatMap((edit): Result<Said, Edit> => {
+            if (edit.unchanged) return ok(edit);
+            if (outOfReach(entity, edit.at, this.reach)) return err({ said: "Too far away." });
+            const refused = this.canEdit?.({ actor: entity, position: [...edit.at], from: this.registry.name(edit.from), to: command.block }, this);
+            return refused ? err({ said: refused }) : ok(edit);
+          }),
+          flatMap((edit) => clearOf(this._state, this.registry, edit)),
+        );
+        if (!planned.ok) return refusalText(planned.error, command.block);
+        commit(this._state, planned.value, events);
         return null;
       }
       case "act": {
@@ -282,19 +271,11 @@ export class Simulation {
       dt: this.dt,
       tick: this._state.tick,
       landings: this.landings,
+      // A system's edit: the world's checks and room for the block, but no reach and no game to ask.
       setBlock: (position, block) => {
-        const [x, y, z] = position;
-        if (![x, y, z].every(Number.isInteger)) return false;
-        const to = this.registry.tryId(block);
-        if (to === undefined) return false;
-        const from = getBlock(this._state, x, y, z);
-        if (from === undefined) return false;
-        if (from === to) return true;
-        if (to !== AIR && this.registry.isSolid(to)) {
-          for (const entity of this._state.entities.values()) if (entityOverlapsBlock(entity, x, y, z)) return false;
-        }
-        writeBlock(this._state, x, y, z, to);
-        events.push({ type: "blockChanged", position: [x, y, z], from, to });
+        const planned = pipe(planEdit(this._state, this.registry, position, block), flatMap((edit) => clearOf(this._state, this.registry, edit)));
+        if (!planned.ok) return false;
+        commit(this._state, planned.value, events);
         return true;
       },
     };
@@ -324,6 +305,81 @@ export class Simulation {
     events.push({ type: "chunkLoaded", key });
     return true;
   }
+}
+
+// ---- block edits, as pure checks and one place that writes ------------------------------
+
+/** Why an edit was refused by the world's own checks. */
+type EditRefusal = "position" | "block" | "unloaded" | "occupied";
+/** A refusal already in words: out of reach, or a game's own reason, passed on as it is. */
+interface Said {
+  readonly said: string;
+}
+
+/** An edit that passed the checks so far: the cell, and the block ids before and after. */
+interface Edit {
+  readonly at: Vec3;
+  readonly from: number;
+  readonly to: number;
+  /** The block is already there: nothing to write and nothing to report. */
+  readonly unchanged: boolean;
+}
+
+/** The world's own checks on any edit: a whole-numbered cell, a known block, loaded ground. */
+function planEdit(state: GameState, registry: BlockRegistry, position: unknown, block: string): Result<EditRefusal, Edit> {
+  if (!Array.isArray(position) || position.length !== 3 || !position.every(Number.isInteger)) return err("position");
+  const at: Vec3 = [position[0], position[1], position[2]];
+  const to = registry.tryId(block);
+  if (to === undefined) return err("block");
+  const from = getBlock(state, at[0], at[1], at[2]);
+  if (from === undefined) return err("unloaded");
+  return ok({ at, from, to, unchanged: from === to });
+}
+
+/** Refuses a solid block where any entity stands. Leaving a block as it is never needs room. */
+function clearOf(state: GameState, registry: BlockRegistry, edit: Edit): Result<EditRefusal, Edit> {
+  if (edit.unchanged || edit.to === AIR || !registry.isSolid(edit.to)) return ok(edit);
+  for (const other of state.entities.values()) if (entityOverlapsBlock(other, edit.at[0], edit.at[1], edit.at[2])) return err("occupied");
+  return ok(edit);
+}
+
+/** Whether a cell lies beyond an entity's reach, measured from its eyes to the cell's middle. */
+function outOfReach(entity: Entity, at: Vec3, reach: number): boolean {
+  const eye = eyePosition(entity);
+  return Math.hypot(at[0] + 0.5 - eye[0], at[1] + 0.5 - eye[1], at[2] + 0.5 - eye[2]) > reach + 1;
+}
+
+/** A refusal in the words a player is shown. */
+function refusalText(reason: EditRefusal | Said, block: string): string {
+  if (typeof reason !== "string") return reason.said;
+  switch (reason) {
+    case "position":
+      return "Block position must be three integers.";
+    case "block":
+      return `Unknown block "${block}".`;
+    case "unloaded":
+      return "That part of the world is not loaded.";
+    case "occupied":
+      return "Something is in the way.";
+  }
+}
+
+/** Writes an edit and reports it: the one place a block change happens. */
+function commit(state: GameState, edit: Edit, events: SimEvent[]): void {
+  if (edit.unchanged) return;
+  writeBlock(state, edit.at[0], edit.at[1], edit.at[2], edit.to);
+  events.push({ type: "blockChanged", position: [...edit.at], from: edit.from, to: edit.to });
+}
+
+/** An input command as the entity's new input and view, or why it cannot be. */
+function parseInput(command: Extract<Command, { type: "input" }>): Result<string, { input: EntityInput; yaw: number; pitch: number }> {
+  const { forward, strafe, yaw, pitch } = command;
+  if (![forward, strafe, yaw, pitch].every(Number.isFinite)) return err("Input values must be finite numbers.");
+  return ok({
+    input: { forward: clamp(forward, -1, 1), strafe: clamp(strafe, -1, 1), jump: command.jump === true, sprint: command.sprint === true },
+    yaw,
+    pitch: clamp(pitch, -Math.PI / 2, Math.PI / 2),
+  });
 }
 
 const ringCache = new Map<number, [number, number][]>();

@@ -40,6 +40,30 @@ connection.send({ type: "command", command: { type: "input", forward: 1, strafe:
 host.advance(1 / 60);
 ```
 
+### Functional building blocks
+
+Core also exports a small, typed toolkit for writing game rules as pure
+functions: `pipe` and `flow` for composing stages, `Monoid` for combining
+values (sums, ranges, bounding boxes, records field by field) with laws the
+tests check, and `Result` for a refusal as a value instead of a thrown error.
+
+```ts
+import { Monoid, parseSnapshot, pipe, Result } from "@cubit/core";
+
+// The box round some blocks, folded with a monoid: no loop, no Infinity sentinels.
+const bounds = Monoid.foldMap(Monoid.box3)(([x, y, z]: [number, number, number]) => Monoid.cellBox(x, y, z))([
+  [0, 0, 0],
+  [4, 2, -1],
+]);
+
+// A save from storage, read as data: the reason in words, or the snapshot.
+const loaded = pipe(
+  parseSnapshot(JSON.parse(localStorage.getItem("save") ?? "null")),
+  Result.map((snapshot) => snapshot.tick),
+  Result.getOrElse(() => 0),
+);
+```
+
 `sim.snapshot()` saves the game as JSON, storing only the chunks that changed;
 `encodeSnapshotBinary` gives a compact binary form. How the parts fit together
 is in [docs/architecture.md](https://github.com/mmncit/cubit/blob/main/docs/architecture.md).

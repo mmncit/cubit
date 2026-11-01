@@ -1,5 +1,6 @@
 import { DEFAULT_SHADE, FACES, faceColor, meshArrays } from "./faces";
 import type { Vec3 } from "./math";
+import { box3, cellBox, concatAll, isEmptyBox, type Box3 } from "./monoid";
 import type { ChunkMesh, MeshOptions } from "./mesher";
 
 /**
@@ -58,25 +59,24 @@ export function validateModel(model: VoxelModel): void {
 export function glowCentre(model: VoxelModel): { centre: Vec3; radius: number } | null {
   const glow = new Set(model.glow ?? []);
   if (glow.size === 0) return null;
+  const [sx, , sz] = model.size;
+  const bounds = concatAll(box3)(voxelsWhere(model, (v) => glow.has(v)));
+  if (isEmptyBox(bounds)) return null;
+  const { min: lo, max: hi } = bounds;
+  const s = model.scale;
+  const centre: Vec3 = [((lo[0] + hi[0]) / 2 - sx / 2) * s, ((lo[1] + hi[1]) / 2) * s, ((lo[2] + hi[2]) / 2 - sz / 2) * s];
+  const radius = (Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2) * s;
+  return { centre, radius };
+}
+
+/** The box of every voxel whose palette entry passes `keep`, in the model's own voxel units. */
+function* voxelsWhere(model: VoxelModel, keep: (entry: number) => boolean): Generator<Box3> {
   const [sx, sy, sz] = model.size;
-  const lo = [Infinity, Infinity, Infinity];
-  const hi = [-Infinity, -Infinity, -Infinity];
   for (let y = 0; y < sy; y++) {
     for (let z = 0; z < sz; z++) {
-      for (let x = 0; x < sx; x++) {
-        if (!glow.has(model.voxels[x + z * sx + y * sx * sz]!)) continue;
-        [x, y, z].forEach((v, i) => {
-          lo[i] = Math.min(lo[i]!, v);
-          hi[i] = Math.max(hi[i]!, v + 1);
-        });
-      }
+      for (let x = 0; x < sx; x++) if (keep(model.voxels[x + z * sx + y * sx * sz]!)) yield cellBox(x, y, z);
     }
   }
-  if (lo[0] === Infinity) return null;
-  const s = model.scale;
-  const centre: Vec3 = [((lo[0]! + hi[0]!) / 2 - sx / 2) * s, ((lo[1]! + hi[1]!) / 2) * s, ((lo[2]! + hi[2]!) / 2 - sz / 2) * s];
-  const radius = (Math.max(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!) / 2) * s;
-  return { centre, radius };
 }
 
 /**

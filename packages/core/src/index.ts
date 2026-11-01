@@ -5,6 +5,7 @@ export * from "./client";
 export * from "./codec";
 export * from "./commands";
 export * from "./entity";
+export * from "./function";
 export * from "./generator";
 export * from "./host";
 export * from "./json";
@@ -23,3 +24,6 @@ export * from "./snapshot";
 export * from "./textures";
 export * from "./topdown";
 export * from "./world";
+// Namespaced, so their short names (sum, min, ok, map) do not crowd the package's own.
+export * as Monoid from "./monoid";
+export * as Result from "./result";
