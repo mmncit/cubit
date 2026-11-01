@@ -20,7 +20,8 @@ The screenshots are from the sandbox in `examples/sandbox`, at its default seed.
 ## What it does
 
 - Chunked block worlds with a fixed-tick simulation, walking physics and
-  collision, raycasting and reach checks.
+  collision, swimming with buoyancy and water drag, air drag towards a
+  terminal speed, raycasting and reach checks.
 - A host and client split even in single player. The client draws only what
   the host has sent it, so nothing in a game can quietly depend on shared memory.
 - Saves as snapshots that store only the chunks a player changed, in JSON or a

@@ -138,9 +138,20 @@ second mesh per chunk, see-through, from both sides, after everything solid and
 without writing depth, so what lies under the water still shows. A world with no
 liquid meshes exactly as it did before.
 
+Physics is a walker controller, gravity with drag, and per-axis collision.
+Movement eases towards the speed the input asks for with an exact exponential
+approach, so it feels the same at any tick rate. Air drag grows with the
+square of the speed, so a fall builds smoothly towards `terminalVelocity`
+rather than stopping at it. In a liquid a walker is as slow as it is deep
+(`immersion`, by thirds of its height): buoyancy holds up most of gravity,
+water drag grows with speed so a hard entry slows within a block or two,
+holding jump swims up, and swimming at a bank with jump held hops out onto
+it. Every figure is in `PhysicsConfig`.
+
 Physics reports landings. `stepEntity` returns how fast a walker was falling
 when it landed, and the simulation hands the last tick's landings to game
-systems as `landings`, by entity id. It is not part of the state, so snapshots
+systems as `landings`, by entity id. Water breaks a fall, so a landing in it
+is not reported. It is not part of the state, so snapshots
 do not change; a game uses it to judge a hard landing.
 
 ## Touch first
@@ -174,7 +185,7 @@ Not done yet, roughly in the order it would be needed:
 5. **Chunk unloading.** Chunks stay in memory once loaded. A long session on a
    server needs to drop unmodified chunks far from every player.
 
-Physics uses `Math.sin` and `Math.cos`, which are not guaranteed to give
+Physics uses `Math.sin`, `Math.cos` and `Math.exp`, which are not guaranteed to give
 identical results in every JavaScript engine. The design is server-authoritative
 for that reason: clients never need to compute exactly what the server computes.
 
